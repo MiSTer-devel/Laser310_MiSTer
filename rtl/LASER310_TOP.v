@@ -1,17 +1,46 @@
+
 `define BASE_SYS_ROM
+//`define	BENNVENN_DOS_ROM
 `define BASE_DOS_ROM
 `define BOOT_ROM_6000
-`define BASE_RAM_78//2k
+`define BASE_RAM_78		//2k
 `define BASE_RAM_16K
-//`define RAM_16K_EXPANSION
-`define VRAM_2K
-//`define VRAM_8K
-`define SHRG
+`define RAM_16K_EXPANSION
+`define SHRG				// Extended drawing mode support
+//`define VRAM_2K
+`define VRAM_8K
+//`define VRAM_24K		// SUPER SHRG!
+`define WIDTH_64			// enable 64x32 screen mode
+
 `define CASS_EMU
 //`define CASS_EMU_16K
+
 `ifndef VERILATOR
 `define SN76489
 `endif
+
+//=========================================================================================================
+
+// Enable Lower Case chars in $00-$1F range
+// Also requires SHRG extension active to allow access to GM0 bit
+// GM0 = 0 selects INVERSE, GM0 = 1 selects L/CASE in Text mode (LATCHED_IO_SHRG[2] in Port $20)
+
+// OUT 32,12 selects Lower Case chars, OUT 32,8 selects INVERSE chars.
+ 
+// Mimics the behaviour of the 6847T1 chip.
+// affects char gen rom select in module: char_gen_rom
+
+`define LCASE		
+
+//=========================================================================================================
+
+// enable 64x32 text mode sysrom load.
+// SWITCH 3 OFF selects 32x16 text mode, SWITCH3 ON selects 64x32 text mode
+// only supported by ON-CHIP rom image at this point in time.
+
+`define WIDTH_64
+
+//=========================================================================================================
 
 //`ifdef CASS_EMU_8K
 //`ifdef CASS_EMU_4K
@@ -112,7 +141,7 @@ wire						CPU_RFSH_N;
 (*keep*)wire			VRAM_WR;
 (*keep*)wire [7:0]	VRAM_DATA_OUT;
 (*keep*)wire			VDG_RD;
-(*keep*)wire[12:0]	VDG_ADDRESS;
+(*keep*)wire [14:0]	VDG_ADDRESS;	// 14 for SSHRG 24KB modes
 (*keep*)wire [7:0]	VDG_DATA;
 // ROM IO RAM
 reg					LATCHED_DOSROM_EN;
@@ -162,8 +191,9 @@ reg		[7:0]		LATCHED_BANK_4000;
 reg		[7:0]		LATCHED_BANK_C000;
 reg		[7:0]		LATCHED_BANK_4DEF;
 `ifdef SHRG
-reg					LATCHED_SHRG_EN;
-reg		[7:0]		LATCHED_IO_SHRG;
+reg				LATCHED_SHRG_EN;
+reg		[7:0]		LATCHED_IO_SHRG;		// 7:5 unused, 4:2 = 6847 GM[2:0], 1:0 = VRAM bank (4x2KB)
+								// 6:5 == VRAM bank 3:2 for 64x32 modes (16 x 2KB, but only 24KB required)
 `endif
 
 // keyboard
@@ -256,11 +286,12 @@ always @(posedge CLK50MHZ or negedge RESET_N)
 		LATCHED_BOOTROM_EN		<=	BOOTROM_EN;
 		LATCHED_AUTOSTARTROM_EN	<=	AUTOSTARTROM_EN;
 		//LATCHED_BOOTROM_EN		<=	1'b0;
-`ifdef SHRG
-		LATCHED_IO_SHRG			<=	8'b00001000;
-		// 复位期间设置，避免拨动开关引起错误
+
+`ifdef SHRG									// Sampled during reset to avoid the error caused by the switch toggling randomly
+		LATCHED_IO_SHRG			<=	8'b00001000;		// default to GM 010 mode: 128x64 colour + VRAM BANK 0000
 		LATCHED_SHRG_EN			<=	SWITCH[2];
 `endif
+
 `ifdef IO_BANK
 		if(BOOTROM_EN)
 			LATCHED_BANK_C000		<=	BOOTROM_BANK;
@@ -484,37 +515,50 @@ vz_loader vz_loader(
 // B800 -- BFFF RAM ext 2KB
 // C000 -- F7FF RAM ext 14KB
 
-assign ADDRESS_ROM				=	(CPU_A[15:14] == 2'b00)?1'b1:1'b0;
+assign ADDRESS_ROM			=	(CPU_A[15:14] == 2'b00)?1'b1:1'b0;
 assign ADDRESS_DOSROM			=	(CPU_A[15:13] == 3'b010)?LATCHED_DOSROM_EN:1'b0;
 assign ADDRESS_BOOTROM_6000		=	(CPU_A[15:11] == 5'b01100)?LATCHED_BOOTROM_EN:1'b0;
 assign ADDRESS_AUTOSTARTROM		=	(CPU_A[15:12] == 4'h4||CPU_A[15:12] == 4'hD||CPU_A[15:12] == 4'hE||CPU_A[15:12] == 4'hF)?LATCHED_AUTOSTARTROM_EN:1'b0;
-assign ADDRESS_IO				=	(CPU_A[15:11] == 5'b01101)?1'b1:1'b0;
-assign ADDRESS_VRAM				=	(CPU_A[15:11] == 5'b01110)?1'b1:1'b0;
-assign ADDRESS_89AB				=	(CPU_A[15:14] == 2'b10)?1'b1:1'b0;
-assign ADDRESS_CDEF				=	(CPU_A[15:14] == 2'b11)?1'b1:1'b0;
+assign ADDRESS_IO			=	(CPU_A[15:11] == 5'b01101)?1'b1:1'b0;
+assign ADDRESS_VRAM			=	(CPU_A[15:11] == 5'b01110)?1'b1:1'b0;
+assign ADDRESS_89AB			=	(CPU_A[15:14] == 2'b10)?1'b1:1'b0;
+assign ADDRESS_CDEF			=	(CPU_A[15:14] == 2'b11)?1'b1:1'b0;
+
 // 7800 -- 7FFF RAM 2KB
 assign ADDRESS_RAM_78			=	(CPU_A[15:11] == 5'b01111)?1'b1:1'b0;
-// 7800 -- 7FFF RAM 2KB
-// 8000 -- B7FF RAM 14KB
 
-assign ADDRESS_RAM_16K		=	(CPU_A[15:12] == 4'h8)?1'b1:
-								(CPU_A[15:12] == 4'h9)?1'b1:
-								(CPU_A[15:12] == 4'hA)?1'b1:
-								(CPU_A[15:11] == 5'b01111)?1'b1:
-								(CPU_A[15:11] == 5'b10110)?1'b1:
-								1'b0;
+// ** if using the 7800 2k ram, bump the other ram up to $8000-$BFFF and $C000-$FFFF. **
 
-// B800 -- BFFF RAM ext 2KB
-// C000 -- F7FF RAM ext 14KB
+`ifdef BASE_RAM_78
 
-assign ADDRESS_RAM_16K_EXP	=	(CPU_A[15:12] == 4'hC)?1'b1:
-								(CPU_A[15:12] == 4'hD)?1'b1:
-								(CPU_A[15:12] == 4'hE)?1'b1:
-								(CPU_A[15:11] == 5'b10111)?1'b1:
-								(CPU_A[15:11] == 5'b11110)?1'b1:
-								1'b0;
+	assign ADDRESS_RAM_16K			= ADDRESS_89AB;
+	assign ADDRESS_RAM_16K_EXP		= ADDRESS_CDEF;
 
-assign ADDRESS_IO_SHRG		=	(CPU_A[7:0] == 8'd32)?1'b1:1'b0;
+`else
+
+	// 7800 -- 7FFF RAM 2KB
+	// 8000 -- B7FF RAM 14KB
+
+	assign ADDRESS_RAM_16K	=	(CPU_A[15:12] == 4'h8)?1'b1:
+					(CPU_A[15:12] == 4'h9)?1'b1:
+					(CPU_A[15:12] == 4'hA)?1'b1:
+					(CPU_A[15:11] == 5'b01111)?1'b1:
+					(CPU_A[15:11] == 5'b10110)?1'b1:
+					1'b0;
+
+	// B800 -- BFFF RAM ext 2KB
+	// C000 -- F7FF RAM ext 14KB
+
+	assign ADDRESS_RAM_16K_EXP =	(CPU_A[15:12] == 4'hC)?1'b1:
+					(CPU_A[15:12] == 4'hD)?1'b1:
+					(CPU_A[15:12] == 4'hE)?1'b1:
+					(CPU_A[15:11] == 5'b10111)?1'b1:
+					(CPU_A[15:11] == 5'b11110)?1'b1:
+					1'b0;
+
+`endif
+
+assign ADDRESS_IO_SHRG		=	(CPU_A[7:0] == 8'd32)?1'b1:1'b0;	// I/O $20
 
 // 64K RAM expansion cartridge vz300_review.pdf 中的端口号是 IO 7FH 127
 // 128K SIDEWAYS RAM SHRG2 HVVZUG23 (Mar-Apr 1989).PDF 中的端口号是 IO 112
@@ -546,40 +590,59 @@ assign RAM_CDEF_WR		= ({ADDRESS_CDEF,MEM_OP_WR,CPU_WR,CPU_IORQ} == 4'b1110)?1'b1
 
 
 assign CPU_DI = 	
-					ADDRESS_ROM				? SYS_ROM_DATA			:
-						ADDRESS_AUTOSTARTROM	? AUTOSTART_ROM_DATA	:
-						ADDRESS_DOSROM			? DOS_ROM_DATA			:
+				ADDRESS_ROM		? SYS_ROM_DATA		:
+				ADDRESS_AUTOSTARTROM	? AUTOSTART_ROM_DATA	:
+				ADDRESS_DOSROM		? DOS_ROM_DATA		:
+				ADDRESS_RAM_78		? RAM_78_DATA		:
 `ifdef BOOT_ROM_6000
-						ADDRESS_BOOTROM_6000	? BOOT_ROM_6000_DATA	:
+				ADDRESS_BOOTROM_6000	? BOOT_ROM_6000_DATA	:
 `endif
-						ADDRESS_IO				? LATCHED_KEY_DATA		:
-						ADDRESS_VRAM			? VRAM_DATA_OUT			:
+				ADDRESS_IO		? LATCHED_KEY_DATA	:
+				ADDRESS_VRAM		? VRAM_DATA_OUT		:
 `ifdef BASE_RAM_16K
-						ADDRESS_RAM_16K			? RAM_16K_DATA_OUT		:
+				ADDRESS_RAM_16K		? RAM_16K_DATA_OUT	:
 `endif
 `ifdef RAM_16K_EXPANSION
-						ADDRESS_RAM_16K_EXP		? RAM_16K_EXP_DATA_OUT	:
+				ADDRESS_RAM_16K_EXP	? RAM_16K_EXP_DATA_OUT	:
 `endif
-					8'hzz;
+				8'hzz;
 
 
 
 `ifdef BASE_SYS_ROM
-sprom #(
-`ifndef VERILATOR
-	.init_file("./roms/sysrom.mif"),
-`else
-	.init_file("./roms/sysrom.hex"),
-`endif
-	.widthad_a(14),
-	.width_a(8))
-sys_rom(
-	.address(CPU_A[13:0]),
-	.clock(CLK50MHZ),
-	.q(SYS_ROM_DATA)
-	);
+	`ifdef WIDTH_64
+	// This ROM is 32KB.
+	// Low half is normal V2.0, top half is patched version of V2.0 for 64x32 text mode
+
+	sprom #(
+		.init_file("./roms/sysrom32_64.mif"),
+		.widthad_a(15),
+		.width_a(8))
+	sys_rom(
+		.address({SWITCH[3],CPU_A[13:0]}),		// SW3 selects 64x32 text mode
+		.clock(CLK50MHZ),
+		.q(SYS_ROM_DATA)
+		);
+	`else
+
+	sprom #(
+	`ifndef VERILATOR
+		.init_file("./roms/sysrom.mif"),
+	`else
+		.init_file("./roms/sysrom.hex"),
+	`endif
+		.widthad_a(14),
+		.width_a(8))
+	sys_rom(
+		.address(CPU_A[13:0]),
+		.clock(CLK50MHZ),
+		.q(SYS_ROM_DATA)
+		);
+
+	`endif
 `endif
 
+//====================================================================
 `ifdef BASE_DOS_ROM
 sprom #(
 `ifndef VERILATOR
@@ -596,6 +659,8 @@ DOS_ROM(
 	);
 `endif
 
+//====================================================================
+
 `ifdef BOOT_ROM_6000
 sprom #(
 `ifndef VERILATOR
@@ -611,6 +676,8 @@ BOOT_ROM(
 	.q(BOOT_ROM_6000_DATA)
 	);
 `endif
+
+//====================================================================
 
 `ifdef BASE_RAM_78
 spram #(
@@ -658,6 +725,7 @@ BASE_RAM16kex(
 assign	RAM_16K_EXP_DATA_OUT	=	8'bz;
 `endif
 
+//=====================================================================
 
 `ifdef VRAM_2K
 dpram #(
@@ -694,22 +762,43 @@ vram_8k(
 	);
 `endif
 
+`ifdef VRAM_24K		// Super SHRG!
+dpram #(
+	.addr_width_g(15),
+	.data_width_g(8))
+vram_24k(
+	.clk_a_i(CLK50MHZ),
+	.en_a_i(1),
+	.we_i(CPU_MREQ & VRAM_WR),
+	.addr_a_i({LATCHED_IO_SHRG[6:5],LATCHED_IO_SHRG[1:0],CPU_A[10:0]}),		// CPU only has a 2KB window for access. 
+	.data_a_i(CPU_DO),
+	.data_a_o(VRAM_DATA_OUT),
+	.clk_b_i(VDG_RD),
+	.addr_b_i(VDG_ADDRESS[14:0]),
+	.data_b_o(VDG_DATA)
+	);
+`endif
+
+//=====================================================================
 MC6847_VGA MC6847_VGA(
 	.PIX_CLK(CLK25MHZ),
 	.RESET_N(RESET_N),
+	.width_64(SWITCH[3]),			// Switch 3 enables 64x32 text
+
 	.RD(VDG_RD),
 	.DD(VDG_DATA),
 	.DA(VDG_ADDRESS),
-	.AG(LATCHED_IO_DATA_WR[3]),
-	.AS(1'b0),
-	.EXT(1'b0),
-	.INV(1'b0),
+
+	.AG(LATCHED_IO_DATA_WR[3]),		// _A/G     		_Alphanumeric/Graphics                             
+	.AS(1'b0),				// _A/S			_Alphanumeric/Semi-Graphics
+	.EXT(1'b0),				// _INT/EXT		_Internal/external         
+	.INV(1'b0),				// INV			0 = normal, 1 = inverse    
 `ifdef SHRG
-	.GM(LATCHED_IO_SHRG[4:2]),
+	.GM(LATCHED_IO_SHRG[4:2]),		// GM[2:0]		Select 1 of 8 Gfx modes when _AG == 0
 `else
-	.GM(3'b010),
+	.GM(3'b010),				// fixed graphic 010 mode = 128x64 colour 
 `endif
-	.CSS(LATCHED_IO_DATA_WR[4]),
+	.CSS(LATCHED_IO_DATA_WR[4]),		// CSS			Colour Set Select. 0 = BLACK/GREEN, 1 = BLACK/ORANGE
 	// vga
 	.blank(blank),
 	.h_blank(h_blank),

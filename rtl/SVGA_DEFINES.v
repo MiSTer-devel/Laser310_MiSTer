@@ -202,7 +202,7 @@ equal the rate specified above the timing block that is uncommented.
 
 `define CLK_MULTIPLY		13		// 50 * 13/10 = 65.000 MHz
 `define CLK_DIVIDE		10
-/*
+*/
 
 /*
 // 1024 X 768 @ 70Hz with a 75.000MHz pixel clock

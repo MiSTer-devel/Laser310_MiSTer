@@ -52,7 +52,7 @@ always @ (posedge pixel_clock or posedge reset) begin
 		// output black during the blank signal
 		VGA_OUT_HSYNC	 		<= h_synch;
 		VGA_OUT_VSYNC 	 		<= v_synch;
-		VGA_OUT_RED				<= 8'b0;
+		VGA_OUT_RED			<= 8'b0;
 		VGA_OUT_GREEN			<= 8'b0;
 		VGA_OUT_BLUE			<= 8'b0;
 	end
@@ -61,7 +61,7 @@ always @ (posedge pixel_clock or posedge reset) begin
 		// output color data otherwise
 		VGA_OUT_HSYNC	 		<= h_synch;
 		VGA_OUT_VSYNC 	 		<= v_synch;
-		VGA_OUT_RED				<= vga_red_data;
+		VGA_OUT_RED			<= vga_red_data;
 		VGA_OUT_GREEN			<= vga_green_data;
 		VGA_OUT_BLUE			<= vga_blue_data;
 	end
