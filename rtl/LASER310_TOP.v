@@ -3,14 +3,14 @@
 //`define	BENNVENN_DOS_ROM
 `define BASE_DOS_ROM
 `define BOOT_ROM_6000
-`define BASE_RAM_78		//2k
+`define BASE_RAM_78	//2k
 `define BASE_RAM_16K
 `define RAM_16K_EXPANSION
-`define SHRG				// Extended drawing mode support
+`define SHRG			// Extended drawing mode support
 //`define VRAM_2K
 `define VRAM_8K
 //`define VRAM_24K		// SUPER SHRG!
-`define WIDTH_64			// enable 64x32 screen mode
+`define WIDTH_64		// enable 64x32 screen mode
 
 `define CASS_EMU
 //`define CASS_EMU_16K
@@ -69,7 +69,6 @@ output	[7:0]	VGA_GREEN,
 output	[7:0]	VGA_BLUE,
 output			VGA_HS,
 output			VGA_VS,
-output			blank,
 output         h_blank,
 output         v_blank,
 input				VIDEO_MODE,
@@ -800,7 +799,6 @@ MC6847_VGA MC6847_VGA(
 `endif
 	.CSS(LATCHED_IO_DATA_WR[4]),		// CSS			Colour Set Select. 0 = BLACK/GREEN, 1 = BLACK/ORANGE
 	// vga
-	.blank(blank),
 	.h_blank(h_blank),
 	.v_blank(v_blank),
 	.VGA_OUT_HSYNC(VGA_HS),

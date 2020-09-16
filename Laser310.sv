@@ -303,17 +303,17 @@ wire  [7:0] r,g,b;
 
 //video_mixer #(.LINE_LENGTH(640), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
 //video_mixer #(.LINE_LENGTH(384), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
-video_mixer #(.GAMMA(1)) video_mixer
+video_mixer #(.LINE_LENGTH(800),.GAMMA(1)) video_mixer
 (
         .*,
 
-        .clk_vid(clk_50),
-        .ce_pix(clk_25),
+        .clk_vid(clk_25),
+        .ce_pix(1),
         .ce_pix_out(CE_PIXEL),
 
         .scanlines(0),
         //.scandoubler(  scale || forced_scandoubler),
-        .scandoubler(  scale|| forced_scandoubler),
+        .scandoubler(0),
         .hq2x(scale==1),
 
         .mono(0),

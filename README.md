@@ -19,6 +19,11 @@ Added 24K VRAM mode
 Fixed error with CPU reading $7800-$7FFF range
 Added 6847T1 style Lower Case, requires SHRG *ON*
 
+# 16-SEP-20
+
+Fixed display shakiness.
+Tweaked display parameters slightly.
+
 # TODO
 
 * cassette 

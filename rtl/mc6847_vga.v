@@ -21,7 +21,6 @@ module MC6847_VGA(
 	input	[2:0]	GM,				// GM[2:0]		Select 1 of 8 Gfx modes when _AG == 0                 
 									// fixed graphic 010 mode = 128x64 colour on stock machine                                                                             
 // vga out
-	output	blank,
 	output   h_blank,
 	output   v_blank,
 
@@ -49,7 +48,6 @@ wire	[7:0]	vga_blue;				// blue video data
 // internal video timing signals
 wire 			h_synch;					// horizontal synch for VGA connector
 wire 			v_synch;					// vertical synch for VGA connector
-//wire 			blank;						// composite blanking
 wire	[10:0]	pixel_count;				// bit mapped pixel position within the line
 wire	[9:0]	line_count;					// bit mapped line number in a frame lines within the frame
 
@@ -151,7 +149,6 @@ SVGA_TIMING_GENERATION SVGA_TIMING_GENERATION
 	.reset(reset),
 	.h_synch(h_synch),
 	.v_synch(v_synch),
-	.blank(blank),
 	.h_blank(h_blank),
 	.v_blank(v_blank),
 	.pixel_count(pixel_count),

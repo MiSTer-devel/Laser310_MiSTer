@@ -1,36 +1,50 @@
 module PIXEL_DISPLAY (
 
 input						pixel_clock,
+
 input						reset,
+     
 
 input						show_border,
+
 input						width_64,			// 64x32 text mode
 
 	// mode
 input						ag,					// _A/G     	_Alphanumeric/Graphics   
+
 input						css,					// CSS			Colour Set Select. 0 = BLACK/GREEN, 1 = BLACK/ORANGE   
+
 input			[2:0]		gm,					// GM[2:0]		Select 1 of 8 Gfx modes when _AG == 0           
 													// fixed graphic 010 mode = 128x64 colour on stock machine      
 
 	// text
 input			[6:0]		char_column,		// character number on the current line         
+
 input			[6:0]		char_line,			// line number on the screen                    
+
 input			[4:0]		subchar_line,		// the line number within a character block 0-8 
+
 input			[3:0]		subchar_pixel,		// the pixel number within a character block 0-8
 
 	// graph
 input			[8:0]		graph_pixel,		// pixel number on the current line   
+
 input			[9:0]		graph_line_2x,		// line number on the screen          
+
 input			[9:0]		graph_line_3x,		// line number on the screen          
 
 	// vram
 output					vram_rd_enable,	// Clock out for vram == pixel clock
+
 output reg	[14:0]	vram_addr,			// Current Address in Video Ram, 24KB max for SSHRG modes
+
 input			[7:0] 	vram_data,			// Data back from video ram
 
 	// vga
 output		[7:0]		vga_red,
+
 output		[7:0]		vga_green,
+
 output		[7:0]		vga_blue
 
 );
@@ -73,10 +87,15 @@ always @ (posedge pixel_clock) begin
 	begin
 		if(subchar_pixel==4'b0001)
 			begin
+				
 			if (width_64)
+					
 				vram_addr <= {4'b0,char_line[4:0], char_column[5:0]};		// 64x32 text
+				
 			else
+					
 				vram_addr <= {6'b0,char_line[3:0], char_column[4:0]};		// 32x16 text
+				
 			end
 				
 			// 对于同步sram需要等待 1 个时钟周期	Waiting for 1 clock cycle for synchronous sram
