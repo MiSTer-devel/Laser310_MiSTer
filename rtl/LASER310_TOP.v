@@ -1300,8 +1300,9 @@ sn76489(
 assign	CASS_OUT = EMU_CASS_EN ? EMU_CASS_DAT : {LATCHED_IO_DATA_WR[2], 1'b0};
 
 (*keep*)wire trap = (CPU_RD|CPU_WR) && (CPU_A[15:12] == 4'h0);
-assign audio_s = 0;
+//assign audio_s = 0;
 //assign audio_s = { aud,aud,aud,aud,1'b0,1'b0,1'b0,1'b0};
+assign audio_s = { LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[LATCHED_IO_DATA_WR[0]],aud,1'b0,1'b0,1'b0,1'b0};
 wire aud = LATCHED_IO_DATA_WR[0]|LATCHED_IO_DATA_WR[5];
 assign AUD_ADCDAT = {LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[5]};
 
