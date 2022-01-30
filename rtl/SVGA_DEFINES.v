@@ -12,17 +12,17 @@ equal the rate specified above the timing block that is uncommented.
 
 
 //  640 X 480 @ 60Hz with a 25.175MHz pixel clock
-`define H_ACTIVE				640	// pixels
-`define H_FRONT_PORCH		16		// pixels
-`define H_SYNCH				96		// pixels
-`define H_BACK_PORCH			48		// pixels
+`define H_ACTIVE			640	// pixels
+`define H_FRONT_PORCH			16	// pixels
+`define H_SYNCH				96	// pixels
+`define H_BACK_PORCH			48	// pixels
 `define H_TOTAL				800	// pixels
 
-`define V_ACTIVE				480	// lines
-`define V_FRONT_PORCH		11		// lines
-`define V_SYNCH				2		// lines
-`define V_BACK_PORCH			31		// lines
-`define V_TOTAL				524	// lines
+`define V_ACTIVE			480	// lines
+`define V_FRONT_PORCH			10	// lines
+`define V_SYNCH				2	// lines
+`define V_BACK_PORCH			33	// lines
+`define V_TOTAL				525	// lines
 
 `define CLK_MULTIPLY			2		// 50 * 2/4 = 25.000 MHz
 `define CLK_DIVIDE			4
@@ -202,7 +202,7 @@ equal the rate specified above the timing block that is uncommented.
 
 `define CLK_MULTIPLY		13		// 50 * 13/10 = 65.000 MHz
 `define CLK_DIVIDE		10
-/*
+*/
 
 /*
 // 1024 X 768 @ 70Hz with a 75.000MHz pixel clock
