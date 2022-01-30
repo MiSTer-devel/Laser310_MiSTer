@@ -4,6 +4,7 @@
 //
 //
 //============================================================================
+
 module emu
 (
 	//Master input clock
@@ -14,7 +15,7 @@ module emu
 	input         RESET,
 
 	//Must be passed to hps_io module
-	inout  [45:0] HPS_BUS,
+	inout  [47:0] HPS_BUS,
 
 	//Base video clock. Usually equals to CLK_SYS.
 	output        CLK_VIDEO,
@@ -24,8 +25,9 @@ module emu
 	output        CE_PIXEL,
 
 	//Video aspect ratio for HDMI. Most retro systems have ratio 4:3.
-	output  [7:0] VIDEO_ARX,
-	output  [7:0] VIDEO_ARY,
+	//if VIDEO_ARX[12] or VIDEO_ARY[12] is set then [11:0] contains scaled size instead of aspect ratio.
+	output [12:0] VIDEO_ARX,
+	output [12:0] VIDEO_ARY,
 
 	output  [7:0] VGA_R,
 	output  [7:0] VGA_G,
@@ -35,15 +37,20 @@ module emu
 	output        VGA_DE,    // = ~(VBlank | HBlank)
 	output        VGA_F1,
 	output [1:0]  VGA_SL,
+	output        VGA_SCALER, // Force VGA scaler
 
-	/*
-	// Use framebuffer from DDRAM (USE_FB=1 in qsf)
+	input  [11:0] HDMI_WIDTH,
+	input  [11:0] HDMI_HEIGHT,
+	output        HDMI_FREEZE,
+
+`ifdef MISTER_FB
+	// Use framebuffer in DDRAM (USE_FB=1 in qsf)
 	// FB_FORMAT:
 	//    [2:0] : 011=8bpp(palette) 100=16bpp 101=24bpp 110=32bpp
 	//    [3]   : 0=16bits 565 1=16bits 1555
 	//    [4]   : 0=RGB  1=BGR (for 16/24/32 modes)
 	//
-	// FB_STRIDE either 0 (rounded to 256 bytes) or multiple of 16 bytes.
+	// FB_STRIDE either 0 (rounded to 256 bytes) or multiple of pixel size (in bytes)
 	output        FB_EN,
 	output  [4:0] FB_FORMAT,
 	output [11:0] FB_WIDTH,
@@ -52,7 +59,18 @@ module emu
 	output [13:0] FB_STRIDE,
 	input         FB_VBL,
 	input         FB_LL,
-	*/
+	output        FB_FORCE_BLANK,
+
+`ifdef MISTER_FB_PALETTE
+	// Palette control for 8bit modes.
+	// Ignored for other video modes.
+	output        FB_PAL_CLK,
+	output  [7:0] FB_PAL_ADDR,
+	output [23:0] FB_PAL_DOUT,
+	input  [23:0] FB_PAL_DIN,
+	output        FB_PAL_WR,
+`endif
+`endif
 
 	output        LED_USER,  // 1 - ON, 0 - OFF.
 
@@ -109,6 +127,20 @@ module emu
 	output        SDRAM_nRAS,
 	output        SDRAM_nWE,
 
+`ifdef MISTER_DUAL_SDRAM
+	//Secondary SDRAM
+	//Set all output SDRAM_* signals to Z ASAP if SDRAM2_EN is 0
+	input         SDRAM2_EN,
+	output        SDRAM2_CLK,
+	output [12:0] SDRAM2_A,
+	output  [1:0] SDRAM2_BA,
+	inout  [15:0] SDRAM2_DQ,
+	output        SDRAM2_nCS,
+	output        SDRAM2_nCAS,
+	output        SDRAM2_nRAS,
+	output        SDRAM2_nWE,
+`endif
+
 	input         UART_CTS,
 	output        UART_RTS,
 	input         UART_RXD,
@@ -127,12 +159,12 @@ module emu
 	input         OSD_STATUS
 );
 
-//`define SOUND_DBG
-wire [2:0] sl = scale ? scale - 1'd1 : 3'd0;
 
-assign VGA_SL=sl[1:0];
-assign VGA_F1=0;
-//assign CE_PIXEL=1;
+//`define SOUND_DBG
+assign VGA_SCALER = 0;
+assign VGA_F1 = 0;
+
+assign HDMI_FREEZE = 0;
 
 assign {UART_RTS, UART_TXD, UART_DTR} = 0;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
@@ -141,9 +173,6 @@ assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DD
 assign ADC_BUS  = 'Z;
 assign {SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 6'b111111;
 assign SDRAM_DQ = 'Z;
-
-assign VIDEO_ARX = status[1] ? 8'd16 : 8'd4;
-assign VIDEO_ARY = status[1] ? 8'd9  : 8'd3; 
 
 assign BUTTONS = 0;
 
@@ -155,6 +184,13 @@ assign LED_POWER = 0;
 assign LED_USER  = LED2/*ioctl_download*/;
 
 
+wire [2:0] sl = scale ? scale - 1'd1 : 3'd0;
+assign VGA_SL = sl[1:0];
+
+wire [1:0] ar = status[9:8];
+
+assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
+assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -162,7 +198,7 @@ localparam CONF_STR = {
         "-;",
         "F1,VZ ,Load VZ Image;",
         "-;",
-		  "O1,Aspect ratio,4:3,16:9;",
+        "O89,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	     "O24,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
 
         "O5,Turbo,Off,On;",
@@ -195,17 +231,15 @@ wire [21:0] gamma_bus;
 wire [15:0] joystick_0, joystick_1;
 
 
-hps_io #(.STRLEN(($size(CONF_STR)>>3) ), .PS2DIV(32)/*, .WIDE(0)*/) hps_io
+hps_io #(.CONF_STR(CONF_STR), .PS2DIV(32)/*, .WIDE(0)*/) hps_io
 (
-        .clk_sys(/*CLK_VIDEO*/clk_sys),
+        .clk_sys(clk_sys),
         .HPS_BUS(HPS_BUS),
 
-        .conf_str(CONF_STR),
         .joystick_0(joystick_0),
         .joystick_1(joystick_1),
         .buttons(buttons),
         .forced_scandoubler(forced_scandoubler),
-        //.new_vmode(new_vmode),
         .gamma_bus(gamma_bus),
 
 
@@ -249,7 +283,7 @@ LASER310_TOP LASER310_TOP(
         .CLK50MHZ(clk_50),
         .CLK25MHZ(clk_25),
         .CLK10MHZ(clk_10),
-		  .CLK42MHZ(clk_42),
+        .CLK42MHZ(clk_42),
         .RESET(~reset),
         .VGA_RED(r),
         .VGA_GREEN(g),
@@ -258,8 +292,8 @@ LASER310_TOP LASER310_TOP(
         .VGA_VS(vs),
         .h_blank(hblank),
         .v_blank(vblank),
-		  .ce_pix(ce_pix),
-        .AUD_ADCDAT(audio),
+        .ce_pix(ce_pix),
+        .AUD_ADCDAT(),
 //      .VIDEO_MODE(1'b0),
         .audio_s(audiomix),
         .key_strobe     (key_strobe     ),
@@ -273,7 +307,7 @@ LASER310_TOP LASER310_TOP(
         .dn_download(ioctl_download),
         .led(LED),
         .led2(LED2),
-        .SWITCH({"0000",status[8],~status[7],status[6],status[5]}),
+        .SWITCH({"0000",status[10],~status[7],status[6],status[5]}),
         .UART_RXD(),
         .UART_TXD(),
 	// joystick
@@ -302,23 +336,16 @@ wire ce_pix;
 //
 wire [2:0] scale = status[4:2];
 wire  [7:0] r,g,b;
+wire       scandoubler = (scale || forced_scandoubler);
+wire freeze_sync;
 
-//video_mixer #(.LINE_LENGTH(640), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
-//video_mixer #(.LINE_LENGTH(384), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
 video_mixer #(.LINE_LENGTH(800),.GAMMA(1)) video_mixer
 (
         .*,
 
-        .clk_vid(clk_42),
         .ce_pix(ce_pix),
-        .ce_pix_out(CE_PIXEL),
 
-        .scanlines(0),
-        //.scandoubler(  scale || forced_scandoubler),
-        .scandoubler(0),
         .hq2x(scale==1),
-
-        .mono(0),
 
         .R(r),
         .G(g),
@@ -330,25 +357,14 @@ video_mixer #(.LINE_LENGTH(800),.GAMMA(1)) video_mixer
         .HBlank(hblank),
         .VBlank(vblank)
 );
+
 //
 //
 wire clk_sys,locked;
 wire hs,vs,hblank,vblank;
 
-//assign VGA_VS=vs;
-//assign VGA_HS=hs;
 wire [7:0]audiomix;
 
-wire [17:0] RGB;
-/*
-//assign VGA_R=8'b11111111;
-assign VGA_R={RGB[5:0],2'b00};
-assign VGA_G={RGB[11:6],2'b00};
-assign VGA_B={RGB[17:12],2'b00};
-//assign VGA_DE=~(vblank | hblank);
-assign VGA_DE=(vblank & hblank);
-
-*/
 assign AUDIO_L={audiomix,8'b0000000};
 assign AUDIO_R=AUDIO_L;
 
