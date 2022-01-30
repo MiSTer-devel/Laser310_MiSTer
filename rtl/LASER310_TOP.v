@@ -10,7 +10,6 @@
 //`define VRAM_2K
 `define VRAM_8K
 //`define VRAM_24K		// SUPER SHRG!
-`define WIDTH_64		// enable 64x32 screen mode
 
 `define CASS_EMU
 //`define CASS_EMU_16K
@@ -38,7 +37,7 @@
 // SWITCH 3 OFF selects 32x16 text mode, SWITCH3 ON selects 64x32 text mode
 // only supported by ON-CHIP rom image at this point in time.
 
-`define WIDTH_64
+//`define WIDTH_64
 
 //=========================================================================================================
 
@@ -63,6 +62,7 @@ module LASER310_TOP(
 input				CLK50MHZ,
 input				CLK25MHZ,
 input				CLK10MHZ,
+input				CLK42MHZ,
 input				RESET,//Active Low
 output	[7:0]	VGA_RED,
 output	[7:0]	VGA_GREEN,
@@ -71,6 +71,7 @@ output			VGA_HS,
 output			VGA_VS,
 output         h_blank,
 output         v_blank,
+output         ce_pix,
 input				VIDEO_MODE,
 output	[1:0]	AUD_ADCDAT,
 output	[7:0]	audio_s,
@@ -779,6 +780,85 @@ vram_24k(
 `endif
 
 //=====================================================================
+// FROM ALICE
+
+
+reg		LATCHED_AG;
+reg		[2:0]	LATCHED_GM;
+reg		LATCHED_CSS;
+
+always @ (posedge CLK42MHZ )
+begin
+	if(!RESET_N)
+	begin
+		LATCHED_AG		<=	1'b0;
+		LATCHED_GM		<=	3'b0;
+		LATCHED_CSS		<=	1'b0;
+	end
+	else
+	begin
+		LATCHED_AG <= LATCHED_IO_DATA_WR[3];
+		LATCHED_GM <= LATCHED_IO_SHRG[4:2];
+		LATCHED_CSS <= LATCHED_IO_DATA_WR[4];
+	end
+end
+
+reg clk_14M318_ena ;
+reg [1:0] count;
+
+
+always @(posedge CLK42MHZ)
+begin
+	if (~RESET_N)
+		count<=0;
+	else
+	begin
+		clk_14M318_ena <= 0;
+		if (count == 'd2)
+		begin
+		  clk_14M318_ena <= 1;
+        count <= 0;
+		end
+		else
+		begin
+			count<=count+1;
+		end
+	end
+end  
+wire vs,hs;
+assign VGA_VS=~vs;
+assign VGA_HS=~hs;
+mc6847 mc6847(
+  .clk(CLK42MHZ),
+  .clk_ena(clk_14M318_ena),
+  .reset(~RESET_N),
+  .da0(),
+  .videoaddr(VDG_ADDRESS),
+  .dd(VDG_DATA),
+  .an_g(LATCHED_AG),
+  .an_s(1'b0),
+  .intn_ext(1'b0), // ?
+  .gm(LATCHED_GM),
+//  .gm(3'b010 ),
+  .css(LATCHED_CSS),
+  .inv(1'b1),
+  .red(VGA_RED),
+  .green(VGA_GREEN),
+  .blue(VGA_BLUE),
+  .hsync(hs),
+  .vsync(vs),
+  .hblank(h_blank),
+  .vblank(v_blank),
+  .artifact_en(1'b1),
+  .artifact_set(1'b0),
+  .artifact_phase(1'b1),
+  .cvbs(),
+  .black_backgnd(1'b1),
+  .pixel_clk(ce_pix)
+);
+assign VDG_RD = CLK42MHZ;
+/*
+//=====================================================================
 MC6847_VGA MC6847_VGA(
 	.PIX_CLK(CLK25MHZ),
 	.RESET_N(RESET_N),
@@ -807,6 +887,7 @@ MC6847_VGA MC6847_VGA(
 	.VGA_OUT_GREEN(VGA_GREEN),
 	.VGA_OUT_BLUE(VGA_BLUE)
 );
+*/
 
 /*****************************************************************************
 *  VZ Loader
@@ -1282,20 +1363,7 @@ cass_ram_2k_altera cass_buf(
 
 `endif
 
-`ifdef SN76489
-sn76489_top #(
-	.clock_div_16_g(1))
-sn76489(
-   .clock_i(CLK25MHZ),
-   .clock_en_i(CPU_CLK),
-   .res_n_i(RESET),
-   .ce_n_i(),//todo
-   .we_n_i(),//todo
-   .ready_o(),
-   .d_i(CPU_DO),
-   .aout_o(AJSaudio_s)
-  );
- `endif
+
 
 assign	CASS_OUT = EMU_CASS_EN ? EMU_CASS_DAT : {LATCHED_IO_DATA_WR[2], 1'b0};
 
@@ -1303,6 +1371,9 @@ assign	CASS_OUT = EMU_CASS_EN ? EMU_CASS_DAT : {LATCHED_IO_DATA_WR[2], 1'b0};
 //assign audio_s = 0;
 //assign audio_s = { aud,aud,aud,aud,1'b0,1'b0,1'b0,1'b0};
 assign audio_s = { LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[0],1'b0,1'b0,1'b0,1'b0};
+
+//assign audio_s = { LATCHED_IO_DATA_WR[5],LATCHED_IO_DATA_WR[0],1'b0,1'b0,1'b0,1'b0,1'b0,1'b0};
+//assign audio_s = { LATCHED_IO_DATA_WR[5]^LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[5]^LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[5]^LATCHED_IO_DATA_WR[0],1'b0,1'b0,1'b0,1'b0,1'b0,1'b0};
 wire aud = LATCHED_IO_DATA_WR[0]|LATCHED_IO_DATA_WR[5];
 assign AUD_ADCDAT = {LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[5]};
 

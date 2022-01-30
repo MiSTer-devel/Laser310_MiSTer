@@ -11,12 +11,8 @@ set_global_assignment -name VERILOG_FILE rtl/SVGA_DEFINES.v
 set_global_assignment -name VERILOG_FILE rtl/SVGA_TIMING_GENERATION.v
 set_global_assignment -name VERILOG_FILE rtl/ps2_keyboard_glb.v
 set_global_assignment -name VERILOG_FILE rtl/fdc.v
-set_global_assignment -name VHDL_FILE rtl/sn76489/sn76489_top.vhd
-set_global_assignment -name VHDL_FILE rtl/sn76489/sn76489_tone.vhd
-set_global_assignment -name VHDL_FILE rtl/sn76489/sn76489_noise.vhd
-set_global_assignment -name VHDL_FILE rtl/sn76489/sn76489_latch_ctrl.vhd
-set_global_assignment -name VHDL_FILE rtl/sn76489/sn76489_clock_div.vhd
-set_global_assignment -name VHDL_FILE rtl/sn76489/sn76489_attenuator.vhd
+set_global_assignment -name VERILOG_FILE rtl/6847/mc6847.v
+set_global_assignment -name VERILOG_FILE rtl/6847/rom_char.v
 set_global_assignment -name VHDL_FILE rtl/sprom.vhd
 set_global_assignment -name VHDL_FILE rtl/spram.vhd
 set_global_assignment -name VERILOG_FILE rtl/reset_de.v
