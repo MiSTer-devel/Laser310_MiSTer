@@ -24,13 +24,13 @@ module SVGA_TIMING_GENERATION
 	reset,
 	h_synch,
 	v_synch,
-	blank,
 	h_blank,
 	v_blank,
 	pixel_count,
 	line_count,
 
 	show_border,
+	width_64,
 
 	// text
 	subchar_pixel,
@@ -48,17 +48,20 @@ input 				pixel_clock;		// pixel clock
 input 				reset;				// reset
 (*keep*)output	reg			h_synch;			// horizontal synch for VGA connector
 (*keep*)output	reg			v_synch;			// vertical synch for VGA connector
-output	reg			blank;				// composite blanking
 output	reg	[10:0]	pixel_count;		// counts the pixels in a line
 output	reg	[9:0]	line_count;			// counts the display lines
 
 (*keep*)output	reg			show_border;
+input 							width_64;
 
 // 字符控制
-(*keep*)output	reg	[3:0]	subchar_pixel;		// pixel position within the character
-(*keep*)output	reg	[4:0]	subchar_line;		// identifies the line number within a character block
-(*keep*)output	reg	[6:0]	char_column;		// character number on the current line
-(*keep*)output	reg	[6:0]	char_line;			// line number on the screen
+(*keep*)output	reg	[3:0]	subchar_pixel;		// pixel position within the character							0 to 15
+
+(*keep*)output	reg	[4:0]	subchar_line;		// identifies the line number within a character block		0 to 31
+
+(*keep*)output	reg	[6:0]	char_column;		// character number on the current line							0 to 128
+
+(*keep*)output	reg	[6:0]	char_line;			// line number on the screen							0 to 128
 
 // 图形控制 128*64
 (*keep*)output	reg		[8:0]	graph_pixel;
@@ -123,71 +126,46 @@ always @ (posedge pixel_clock or posedge reset) begin
 		// on reset remove v_synch
 		v_synch <= 1'b0;
 
-	else if ((line_count == (`V_ACTIVE + `V_FRONT_PORCH - 1) &
-		   (pixel_count == `H_TOTAL - 1)))
+	else if ((line_count == (`V_ACTIVE + `V_FRONT_PORCH - 1) & (pixel_count == `H_TOTAL - 1)))
 		// start of v_synch
 		v_synch <= 1'b1;
 
-	else if ((line_count == (`V_TOTAL - `V_BACK_PORCH - 1)) &
-		   (pixel_count == (`H_TOTAL - 1)))
+	else if ((line_count == (`V_TOTAL - `V_BACK_PORCH - 1)) & (pixel_count == (`H_TOTAL - 1)))
 		// end of v_synch
 		v_synch <= 1'b0;
 end
 
 
 // CREATE THE HORIZONTAL BLANKING SIGNAL
-// the "-2" is used instead of "-1" because of the extra register delay
-// for the composite blanking signal
 always @ (posedge pixel_clock or posedge reset) begin
 	if (reset)
 		// on reset remove the h_blank
 		h_blank <= 1'b0;
 
-	else if (pixel_count == (`H_ACTIVE -2))
+	else if (pixel_count == (`H_ACTIVE -1))
 		// start of HBI
 		h_blank <= 1'b1;
 
-	else if (pixel_count == (`H_TOTAL -2))
+	else if (pixel_count == (`H_TOTAL -1))
 		// end of HBI
 		h_blank <= 1'b0;
 end
 
 
 // CREATE THE VERTICAL BLANKING SIGNAL
-// the "-2" is used instead of "-1"  in the horizontal factor because of the extra
-// register delay for the composite blanking signal
 always @ (posedge pixel_clock or posedge reset) begin
 	if (reset)
 		// on reset remove v_blank
 		v_blank <= 1'b0;
 
-	else if ((line_count == (`V_ACTIVE - 1) &
-		   (pixel_count == `H_TOTAL - 2)))
+	else if ((line_count == (`V_ACTIVE - 1) & (pixel_count == `H_TOTAL - 1)))
 		// start of VBI
 		v_blank <= 1'b1;
 
-	else if ((line_count == (`V_TOTAL - 1)) &
-		   (pixel_count == (`H_TOTAL - 2)))
+	else if ((line_count == (`V_TOTAL - 1)) & (pixel_count == (`H_TOTAL - 1)))
 		// end of VBI
 		v_blank <= 1'b0;
 end
-
-
-// CREATE THE COMPOSITE BANKING SIGNAL
-always @ (posedge pixel_clock or posedge reset) begin
-	if (reset)
-		// on reset remove blank
-		blank <= 1'b0;
-
-	// blank during HBI or VBI
-	else if (h_blank || v_blank)
-		blank <= 1'b1;
-
-	else
-		// active video do not blank
-		blank <= 1'b0;
-end
-
 
 ////////////////////////////////////////////////////
 // 以上部分内容相对固定，是VGA的控制信号和计数器  //
@@ -212,10 +190,23 @@ end
 // 字符点阵 subchar_line subchar_pixel
 // 字符寻址 char_column char_line
 
+// 8x12 dot matrix 32x16 characters 256x192
+
+// 640x480 times line 512x384 left and right 64 points, up and down 48 points.
+
+// Need to generate four data values:
+
+// Character lattice	: subchar_line subchar_pixel
+
+// Character addressing : char_column char_line
+
+
+
 always @ (posedge pixel_clock or posedge reset) begin
 	if (reset)
 		show_pixel <= 1'b0;
-	else if (pixel_count == (-1) + 64 - `SVGA_DECODE_DELAY)
+	else if (pixel_count == (-1) + 64 - `SVGA_DECODE_DELAY)		// decode delay == 4 clocks
+		
 		show_pixel <= 1'b1;
 	else if (pixel_count == (`H_ACTIVE - 1) - 64 - `SVGA_DECODE_DELAY)
 		show_pixel <= 1'b0;
@@ -240,7 +231,7 @@ always @ (posedge pixel_clock or posedge reset) begin
 end
 
 
-// text 32x16
+// text 32x16 or 64x32
 
 always @ (posedge pixel_clock or posedge reset) begin
 	if (reset)
@@ -258,8 +249,31 @@ always @ (posedge pixel_clock or posedge reset) begin
 	else if(show_pixel)
 	begin
 		subchar_pixel <= subchar_pixel + 1;
-		if(subchar_pixel == 4'b1111)			// 8*2-1
-			char_column <= char_column + 1;
+		if (width_64)
+			
+			begin
+				
+				if(subchar_pixel == 4'b0111)		// 8-1		64x32
+				
+				begin
+	
+					char_column <= char_column + 1;
+					subchar_pixel <= 4'b0000;
+				
+				end
+			
+			end
+		
+else
+
+			if(subchar_pixel == 4'b1111)			// 8*2-1		32x16
+			
+			begin
+				char_column <= char_column + 1;
+				subchar_pixel <= 4'b0000;
+	
+		end
+
 	end
 end
 
@@ -278,18 +292,38 @@ always @ (posedge h_synch or posedge reset) begin
 		char_line <= 7'd0;
 	end
 	else if(show_line)
-		if(subchar_line == 5'd23)		// 12*2-1
-		begin
-			subchar_line <= 5'b00000;
-			char_line <= char_line + 1;
-		end
+		if (width_64)
+			
+			if(subchar_line == 5'd11)		// 12-1  64x32
+		
+			begin
+				subchar_line <= 5'b00000;
+				char_line <= char_line + 1;
+			end
+			else
+				subchar_line <= subchar_line + 1;		// increment char line counter
+		
 		else
-			// increment line counter
-			subchar_line <= subchar_line + 1;
+			
+			if(subchar_line == 5'd23)		// 12*2-1  normal
+			
+			begin
+				
+				subchar_line <= 5'b00000;
+				char_line <= char_line + 1;
+	
+		end
+
+			else
+				
+				subchar_line <= subchar_line + 1;		// increment char line counter
+
 end
 
 
 // 为所有图形模式提供水平计数
+// Horizontal counting for all graphics modes
+
 always @ (posedge pixel_clock or posedge reset) begin
 	if (reset)
 	begin
@@ -308,6 +342,7 @@ always @ (posedge pixel_clock or posedge reset) begin
 end
 
 // 为图形模式提供垂直计数
+// Vertical count for graphics mode
 // 64x64  4色
 // 128x64  2色
 // 128x64  4色
@@ -331,6 +366,7 @@ always @ (posedge h_synch or posedge reset) begin
 end
 
 // 为图形模式提供垂直计数
+// Vertical count for graphics mode
 // 128x96  2色
 // 128x96  4色
 // 128x192 2色

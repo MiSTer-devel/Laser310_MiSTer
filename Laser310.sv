@@ -162,15 +162,17 @@ localparam CONF_STR = {
         "-;",
         "F1,VZ ,Load VZ Image;",
         "-;",
-	"O1,Aspect ratio,4:3,16:9;",
-	"O24,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
+		  "O1,Aspect ratio,4:3,16:9;",
+	     "O24,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
 
         "O5,Turbo,Off,On;",
         "O6,Dos Rom,Off,On;",
         "O7,SHRG,Off,On;",
+        "O8,64x32 Video,Off,On;",
+
         "-;",
         "R0,Reset;",
-	"J,Fire 1,Button 2;",
+		  "J,Fire 1,Button 2;",
         "V,v",`BUILD_DATE
 };
 
@@ -269,7 +271,7 @@ LASER310_TOP LASER310_TOP(
 	.dn_download(ioctl_download),
 	.led(LED),
 	.led2(LED2),
-        .SWITCH({"00000",~status[7],status[6],status[5]}),
+        .SWITCH({"0000",status[8],~status[7],status[6],status[5]}),
         .UART_RXD(),
         .UART_TXD(),
 	// joystick
@@ -301,17 +303,17 @@ wire  [7:0] r,g,b;
 
 //video_mixer #(.LINE_LENGTH(640), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
 //video_mixer #(.LINE_LENGTH(384), .HALF_DEPTH(0), .GAMMA(1)) video_mixer
-video_mixer #(.GAMMA(1)) video_mixer
+video_mixer #(.LINE_LENGTH(800),.GAMMA(1)) video_mixer
 (
         .*,
 
-        .clk_vid(clk_50),
-        .ce_pix(clk_25),
+        .clk_vid(clk_25),
+        .ce_pix(1),
         .ce_pix_out(CE_PIXEL),
 
         .scanlines(0),
         //.scandoubler(  scale || forced_scandoubler),
-        .scandoubler(  scale|| forced_scandoubler),
+        .scandoubler(0),
         .hq2x(scale==1),
 
         .mono(0),
