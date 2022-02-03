@@ -59,8 +59,6 @@
 
 								
 module LASER310_TOP(
-input				CLK50MHZ,
-input				CLK25MHZ,
 input				CLK10MHZ,
 input				CLK42MHZ,
 input				RESET,//Active Low
@@ -241,7 +239,7 @@ wire				TURBO_SPEED		=	SWITCH[0];
 
 
 RESET_DE RESET_DE(
-	.CLK(CLK50MHZ),
+	.CLK(CLK42MHZ),
 	.SYS_RESET_N(RESET),
 	.RESET_N(RESET_N)
 );
@@ -274,7 +272,7 @@ always @ (negedge CLK10MHZ)
 		end
 	endcase
 
-always @(posedge CLK50MHZ or negedge RESET_N)
+always @(posedge CLK42MHZ or negedge RESET_N)
 	if(~RESET_N)
 	begin
 		CPU_CLK					<=	1'b0;
@@ -367,7 +365,7 @@ always @(posedge CLK50MHZ or negedge RESET_N)
 				AMEM_OP_WR			<=	1'b0;
 				CLK					<=	4'd8;
 			end
-		4'd13:// 正常速度
+		4'd11:// 正常速度
 			begin
 				CPU_CLK				<=	1'b0;
 				AMEM_OP_WR			<=	1'b0;
@@ -393,7 +391,9 @@ assign CPU_RFSH = ~CPU_RFSH_N;
 assign CPU_HALT= ~CPU_HALT_N;
 assign CPU_BUSAK = ~CPU_BUSAK_N;
 assign CPU_RESET_N = ~CPU_RESET;
-assign CPU_INT_N = VIDEO_MODE ? ~CPU_INT : ~VGA_VS;
+//assign CPU_INT_N = VIDEO_MODE ? ~CPU_INT : ~VGA_VS;
+assign CPU_INT_N =  ~VGA_VS; 
+wire VGA_VS2;
 assign CPU_BUSRQ_N = ~CPU_BUSRQ;
 
 `ifdef VERILATOR
@@ -474,19 +474,17 @@ wire GCLK =  CPU_CLK ;
 assign CPU_A = vz_wr ? vz_addr : ACPU_A;
 assign CPU_DO = vz_wr ? vz_data : ACPU_DO;
 wire GCLK = vz_wr ? 1'b0  : CPU_CLK ;
-assign CPU_WR_N = vz_wr ? 0 : ACPU_WR_N;
-assign MEM_OP_WR = vz_wr ? 1 : AMEM_OP_WR;
-assign CPU_IORQ_N = vz_wr ? 1: ACPU_IORQ_N;
-assign CPU_MREQ_N = vz_wr ? 0 : ACPU_MREQ_N;
+assign CPU_WR_N = vz_wr ? 1'b0 : ACPU_WR_N;
+assign MEM_OP_WR = vz_wr ? 1'b1 : AMEM_OP_WR;
+assign CPU_IORQ_N = vz_wr ? 1'b1: ACPU_IORQ_N;
+assign CPU_MREQ_N = vz_wr ? 1'b0 : ACPU_MREQ_N;
 wire [7:0] vz_data;
 wire [15:0] vz_addr;
 wire vz_wr;
 
 
 vz_loader vz_loader(
-        //.I_CLK(CPU_CLK),
-        //.I_CLK(CLK50MHZ),
-        .I_CLK(CLK10MHZ),
+        .I_CLK(CLK42MHZ),
 		  .CPU_CLOCK(GCLK),
 	
         .I_RST(~CPU_RESET_N),
@@ -620,7 +618,7 @@ assign CPU_DI =
 		.width_a(8))
 	sys_rom(
 		.address({SWITCH[3],CPU_A[13:0]}),		// SW3 selects 64x32 text mode
-		.clock(CLK50MHZ),
+		.clock(CLK42MHZ),
 		.q(SYS_ROM_DATA)
 		);
 	`else
@@ -635,7 +633,7 @@ assign CPU_DI =
 		.width_a(8))
 	sys_rom(
 		.address(CPU_A[13:0]),
-		.clock(CLK50MHZ),
+		.clock(CLK42MHZ),
 		.q(SYS_ROM_DATA)
 		);
 
@@ -654,7 +652,7 @@ sprom #(
 	.width_a(8))
 DOS_ROM(
 	.address(CPU_A[12:0]),
-	.clock(CLK50MHZ),
+	.clock(CLK42MHZ),
 	.q(DOS_ROM_DATA)
 	);
 `endif
@@ -672,7 +670,7 @@ sprom #(
 	.width_a(8))
 BOOT_ROM(
 	.address(CPU_A[8:0]),
-	.clock(CLK50MHZ),
+	.clock(CLK42MHZ),
 	.q(BOOT_ROM_6000_DATA)
 	);
 `endif
@@ -686,7 +684,7 @@ spram #(
 BASE_RAM78(
 	.address(CPU_A[10:0]),
 	.clken(1),
-	.clock(CLK50MHZ),
+	.clock(CLK42MHZ),
 	.data(CPU_DO),
 	.wren(CPU_MREQ & RAM_78_WR),
 	.q(RAM_78_DATA)
@@ -700,7 +698,7 @@ spram #(
 BASE_RAM16k(
 	.address(CPU_A[13:0]),
 	.clken(1),
-	.clock(CLK50MHZ),
+	.clock(CLK42MHZ),
 	.data(CPU_DO),
 	.wren(CPU_MREQ & RAM_16K_WR),
 	.q(RAM_16K_DATA_OUT)
@@ -716,7 +714,7 @@ spram #(
 BASE_RAM16kex(
 	.address(CPU_A[13:0]),
 	.clken(1),
-	.clock(CLK50MHZ),
+	.clock(CLK42MHZ),
 	.data(CPU_DO),
 	.wren(CPU_MREQ & RAM_16K_EXP_WR),
 	.q(RAM_16K_EXP_DATA_OUT)
@@ -732,7 +730,7 @@ dpram #(
 	.addr_width_g(11),
 	.data_width_g(8))
 vram_2k(
-	.clk_a_i(CLK50MHZ),
+	.clk_a_i(CLK42MHZ),
 	.en_a_i(1),
 	.we_i(CPU_MREQ & VRAM_WR),
 	.addr_a_i(CPU_A[10:0]),
@@ -750,7 +748,7 @@ dpram #(
 	.addr_width_g(13),
 	.data_width_g(8))
 vram_8k(
-	.clk_a_i(CLK50MHZ),
+	.clk_a_i(CLK42MHZ),
 	.en_a_i(1),
 	.we_i(CPU_MREQ & VRAM_WR),
 	.addr_a_i({LATCHED_IO_SHRG[1:0],CPU_A[10:0]}),
@@ -767,7 +765,7 @@ dpram #(
 	.addr_width_g(15),
 	.data_width_g(8))
 vram_24k(
-	.clk_a_i(CLK50MHZ),
+	.clk_a_i(CLK42MHZ),
 	.en_a_i(1),
 	.we_i(CPU_MREQ & VRAM_WR),
 	.addr_a_i({LATCHED_IO_SHRG[6:5],LATCHED_IO_SHRG[1:0],CPU_A[10:0]}),		// CPU only has a 2KB window for access. 
@@ -841,7 +839,7 @@ mc6847 mc6847(
   .gm(LATCHED_GM),
 //  .gm(3'b010 ),
   .css(LATCHED_CSS),
-  .inv(1'b1),
+  .inv(1'b0),
   .red(VGA_RED),
   .green(VGA_GREEN),
   .blue(VGA_BLUE),
@@ -879,13 +877,13 @@ MC6847_VGA MC6847_VGA(
 `endif
 	.CSS(LATCHED_IO_DATA_WR[4]),		// CSS			Colour Set Select. 0 = BLACK/GREEN, 1 = BLACK/ORANGE
 	// vga
-	.h_blank(h_blank),
-	.v_blank(v_blank),
+	.h_blank(h_blank2),
+	.v_blank(v_blank2),
 	.VGA_OUT_HSYNC(VGA_HS),
 	.VGA_OUT_VSYNC(VGA_VS),
-	.VGA_OUT_RED(VGA_RED),
-	.VGA_OUT_GREEN(VGA_GREEN),
-	.VGA_OUT_BLUE(VGA_BLUE)
+	.VGA_OUT_RED(VGA_RED2),
+	.VGA_OUT_GREEN(VGA_GREEN2),
+	.VGA_OUT_BLUE(VGA_BLUE2)
 );
 */
 
@@ -1256,7 +1254,7 @@ end
 
 
 
-always @ (posedge CLK50MHZ)				// 50MHz
+always @ (posedge CLK42MHZ)				// 50MHz
 	KB_CLK <= KB_CLK + 1'b1;			// 50/32 = 1.5625 MHz
 
 assign PRESS_N = ~key_pressed;
@@ -1302,7 +1300,7 @@ EMU_CASS_KEY	EMU_CASS_KEY(
 	// System
 	TURBO_SPEED,
 	// Clock: 10MHz
-	CLK10MHZ,
+	CLK42MHZ,
 	RESET_N
 );
 
@@ -1313,7 +1311,7 @@ wire [13:0] cass_addr = dn_wr? dn_addr : CASS_BUF_A[13:0];
 
 cass_ram_16k_altera cass_buf(
 	.address(cass_addr),
-	.clock(CLK10MHZ),
+	.clock(CLK42MHZ),
 //	.data(CASS_BUF_DI),
 	.data(dn_data),
 	.wren(CASS_BUF_WR || dn_wr),
@@ -1327,7 +1325,7 @@ cass_ram_16k_altera cass_buf(
 
 cass_ram_8k_altera cass_buf(
 	.address(CASS_BUF_A[12:0]),
-	.clock(CLK10MHZ),
+	.clock(CLK42MHZ),
 	.data(CASS_BUF_DI),
 	.wren(CASS_BUF_WR),
 	.q(CASS_BUF_Q)
@@ -1340,7 +1338,7 @@ cass_ram_8k_altera cass_buf(
 
 cass_ram_4k_altera cass_buf(
 	.address(CASS_BUF_A[11:0]),
-	.clock(CLK10MHZ),
+	.clock(CLK42MHZ),
 	.data(CASS_BUF_DAT),
 	.wren(CASS_BUF_WR),
 	.q(CASS_BUF_Q)
@@ -1353,7 +1351,7 @@ cass_ram_4k_altera cass_buf(
 
 cass_ram_2k_altera cass_buf(
 	.address(CASS_BUF_A[10:0]),
-	.clock(CLK10MHZ),
+	.clock(CLK42MHZ),
 	.data(CASS_BUF_DAT),
 	.wren(CASS_BUF_WR),
 	.q(CASS_BUF_Q)

@@ -15,7 +15,7 @@ module emu
 	input         RESET,
 
 	//Must be passed to hps_io module
-	inout  [47:0] HPS_BUS,
+	inout  [48:0] HPS_BUS,
 
 	//Base video clock. Usually equals to CLK_SYS.
 	output        CLK_VIDEO,
@@ -263,10 +263,7 @@ assign reset = (RESET | status[0] | buttons[1] | rom_download  );
 wire ps2_kbd_clk;
 wire ps2_kbd_data;
 
-  //assign clk_sys  = clk_25;
-  assign clk_sys  = clk_10; // ajs - working?
-  //assign clk_sys  = clk_50;
-
+assign clk_sys  = clk_42; 
 wire       key_pressed = ps2_key[9];
 wire [8:0] key_code    = ps2_key[8:0];
 reg key_strobe;
@@ -280,8 +277,6 @@ end
 end
 
 LASER310_TOP LASER310_TOP(
-        .CLK50MHZ(clk_50),
-        .CLK25MHZ(clk_25),
         .CLK10MHZ(clk_10),
         .CLK42MHZ(clk_42),
         .RESET(~reset),
@@ -369,7 +364,7 @@ assign AUDIO_L={audiomix,8'b0000000};
 assign AUDIO_R=AUDIO_L;
 
 
-wire clk_50, clk_25, clk_10, clk_6p25, clk_42;
+wire clk_42, clk_10;
 wire pll_locked;
 
 
@@ -380,11 +375,9 @@ pll pll
    .refclk   (CLK_50M),
    .rst      (0),
    .locked   (pll_locked),     // PLL is running stable
-   .outclk_0 (clk_50),         // 50 MHz
-   .outclk_1 (clk_25),         // 25 MHz
-   .outclk_2 (clk_10),         // 10 MHz
-   .outclk_3 (clk_6p25),       // 6.25 MHz
-   .outclk_4 (clk_42)          // 6.25 MHz
+   .outclk_0 (clk_42),         // 42 MHz
+   .outclk_1 (clk_10)         // 10 MHz
+
    );
 
   

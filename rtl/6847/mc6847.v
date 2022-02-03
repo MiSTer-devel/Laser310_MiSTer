@@ -31,6 +31,7 @@ module mc6847 (
                );
 
   reg [10:0] char_a;
+  reg [11:0] char_a_w;
   wire [7:0] char_d_o;
 
    parameter CVBS_NOT_VGA       = 1;
@@ -56,6 +57,8 @@ module mc6847 (
    parameter H_TOTAL_PER_LINE   = H_RIGHT_BORDER;
 */
 
+
+	// NTSC
    parameter V2_FRONT_PORCH     = 2;
    parameter V2_VERTICAL_SYNC   = V2_FRONT_PORCH + 2;
    parameter V2_BACK_PORCH      = V2_VERTICAL_SYNC + 12;
@@ -64,6 +67,18 @@ module mc6847 (
    parameter V2_BOTTOM_BORDER   = V2_VIDEO + 27;  // + 25;       // +25 for PAL
    parameter V2_TOTAL_PER_FIELD = V2_BOTTOM_BORDER;
 
+/*
+   // this doesn't seem right	
+	// PAL
+	parameter V2_FRONT_PORCH     = 2;
+   parameter V2_VERTICAL_SYNC   = V2_FRONT_PORCH + 2;
+   parameter V2_BACK_PORCH      = V2_VERTICAL_SYNC + 12;
+   parameter V2_TOP_BORDER      = V2_BACK_PORCH + 26 + 25;  // +25 for PAL
+   parameter V2_VIDEO           = V2_TOP_BORDER + 192;
+   parameter V2_BOTTOM_BORDER   = V2_VIDEO + 27  + 25;       // +25 for PAL
+   parameter V2_TOTAL_PER_FIELD = V2_BOTTOM_BORDER;
+*/
+	
    // internal version of control ports
    wire                          an_g_s;
    wire                          an_s_s;
@@ -415,6 +430,7 @@ module mc6847 (
 
              // generate character rom address
              char_a <= { dd[6:0], row_v[3:0] };
+				 char_a_w<= {dd[7:0],row_v[3:0]};
 
              // DA0 high during FS
              if (cvbs_vblank == 1'b1)
@@ -726,11 +742,31 @@ module mc6847 (
     // wire [7:0] char_data = (vdg_char_addr[3:0] < 3 || vdg_char_addr[3:0] > 10) ? 8'h00 : chr_dout;
     wire [7:0] char_data;
     wire [2:0] char_a_b = char_a[3:0] - 2'b11;
-    assign char_d_o = (char_a[3:0] < 3 || char_a[3:0] > 10) ? 8'h00 : char_data;
+   // assign char_d_o = (char_a[3:0] < 3 || char_a[3:0] > 10) ? 8'h00 : char_data;
+    assign char_d_o =  {char_data[0],char_data[1],char_data[2],char_data[3],char_data[4],char_data[5],char_data[6],char_data[7]};
+/*
     rom_char rom_char(
       .clk(clk),
       .addr({ char_a[9:4], char_a_b }),
       .dout(char_data)
     );
+*/
 
+
+
+	 
+sprom #(
+	`ifndef VERILATOR
+		.init_file("./roms/charrom_4k.mif"),
+	`else
+		.init_file("./roms/charrom_4k.hex"),
+	`endif
+	.widthad_a(12),
+	.width_a(8))
+CHAR_GEN_ROM(
+	.address(char_a_w),
+	.clock(clk),
+	.q(char_data)
+	);
+	 
 endmodule

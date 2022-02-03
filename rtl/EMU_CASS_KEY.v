@@ -9,6 +9,9 @@
 // TURBO_SPEED
 // 2770*3/14 = 594
 
+// AJS -- FIX THIS SPEED
+
+
 //`define		CASS_DELAY_1X			495
 `define		CASS_DELAY_1X			2770
 `define		CASS_DELAY_TURBO_SPEED	594
