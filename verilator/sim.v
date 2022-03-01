@@ -192,7 +192,7 @@ LASER310_TOP LASER310_TOP(
         //"O6,Dos Rom,Off,On;",
         //"O7,SHRG,Off,On;",
         //.SWITCH({"0000",status[10],~status[7],status[6],status[5]}),
-        .SWITCH({6'b0, 1'b0, 1'b1, 1'b0, 1'b0}),
+        .SWITCH({6'b0, 1'b0, 1'b1, 1'b0, 1'b1}),
         .UART_RXD(),
         .UART_TXD(),
         // joystick

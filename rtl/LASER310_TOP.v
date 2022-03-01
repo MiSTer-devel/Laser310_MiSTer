@@ -828,7 +828,11 @@ assign VGA_VS=~vs;
 assign VGA_HS=~hs;
 mc6847 mc6847(
   .clk(CLK42MHZ),
+  `ifdef VERILATOR
+  .clk_ena(1),
+  `else
   .clk_ena(clk_14M318_ena),
+  `endif
   .reset(~RESET_N),
   .da0(),
   .videoaddr(VDG_ADDRESS),
@@ -1250,7 +1254,6 @@ begin
 		endcase
 	end
 end
-
 
 
 
