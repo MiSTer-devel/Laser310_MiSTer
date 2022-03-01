@@ -415,7 +415,10 @@ tv80s Z80CPU (
 	.int_n(CPU_INT_N),
 	.nmi_n(1'b1),
 	.busrq_n(CPU_BUSRQ_N),
-	.di(CPU_DI)
+	.di(CPU_DI),
+	.dir(execute_addr),
+	.dirset(execute_enable)
+
 );
 `else
 t80pa Z80CPU (

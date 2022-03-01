@@ -1,3 +1,4 @@
+`timescale 1ps / 1ps
 //
 // TV80 8-Bit Microprocessor Core
 // Based on the VHDL T80 core by Daniel Wallner (jesus@opencores.org)
@@ -26,7 +27,7 @@ module tv80s (/*AUTOARG*/
   // Outputs
   m1_n, mreq_n, iorq_n, rd_n, wr_n, rfsh_n, halt_n, busak_n, A, dout, 
   // Inputs
-  reset_n, clk, wait_n, int_n, nmi_n, busrq_n, di
+  reset_n, clk, wait_n, int_n, nmi_n, busrq_n, di, dir, dirset
   );
 
   parameter Mode = 0;    // 0 => Z80, 1 => Fast Z80, 2 => 8080, 3 => GB
@@ -51,6 +52,9 @@ module tv80s (/*AUTOARG*/
   output [15:0] A;
   input [7:0]   di;
   output [7:0]  dout;
+
+  input [15:0]  dir;
+  input         dirset;
 
   reg           mreq_n; 
   reg           iorq_n; 
@@ -92,7 +96,10 @@ module tv80s (/*AUTOARG*/
      .dout (dout),
      .mc (mcycle),
      .ts (tstate),
-     .intcycle_n (intcycle_n)
+     .intcycle_n (intcycle_n),
+     .dir (dir),
+     .dirset (dirset)
+
      );  
 
   always @(posedge clk or negedge reset_n)

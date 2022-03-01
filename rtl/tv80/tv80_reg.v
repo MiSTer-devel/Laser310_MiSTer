@@ -1,3 +1,4 @@
+`timescale 1ps / 1ps
 //
 // TV80 8-Bit Microprocessor Core
 // Based on the VHDL T80 core by Daniel Wallner (jesus@opencores.org)
@@ -26,7 +27,7 @@ module tv80_reg (/*AUTOARG*/
   // Outputs
   DOBH, DOAL, DOCL, DOBL, DOCH, DOAH, 
   // Inputs
-  AddrC, AddrA, AddrB, DIH, DIL, clk, CEN, WEH, WEL
+  AddrC, AddrA, AddrB, DIH, DIL, clk, CEN, WEH, WEL, DIRSET
   );
     input  [2:0] AddrC;
     output [7:0] DOBH;
@@ -39,7 +40,7 @@ module tv80_reg (/*AUTOARG*/
     output [7:0] DOBL;
     output [7:0] DOCH;
     output [7:0] DOAH;
-    input  clk, CEN, WEH, WEL;
+    input  clk, CEN, WEH, WEL, DIRSET;
 
   reg [7:0] RegsH [0:7];
   reg [7:0] RegsL [0:7];

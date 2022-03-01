@@ -1,3 +1,4 @@
+`timescale 1ps / 1ps
 //
 // TV80 8-Bit Microprocessor Core
 // Based on the VHDL T80 core by Daniel Wallner (jesus@opencores.org)
@@ -27,7 +28,7 @@ module tv80_core (/*AUTOARG*/
   m1_n, iorq, no_read, write, rfsh_n, halt_n, busak_n, A, dout, mc,
   ts, intcycle_n, IntE, stop,
   // Inputs
-  reset_n, clk, cen, wait_n, int_n, nmi_n, busrq_n, dinst, di
+  reset_n, clk, cen, wait_n, int_n, nmi_n, busrq_n, dinst, di, dir, dirset
   );
   // Beginning of automatic inputs (from unused autoinst inputs)
   // End of automatics
@@ -65,7 +66,10 @@ module tv80_core (/*AUTOARG*/
   output [6:0]  ts;     
   output        intcycle_n;     
   output        IntE;           
-  output        stop;           
+  output        stop;   
+
+  input [15:0]  dir;   
+  input         dirset;         
 
   reg    m1_n;          
   reg    iorq; 
@@ -80,7 +84,7 @@ module tv80_core (/*AUTOARG*/
   reg [6:0]  ts;        
   reg   intcycle_n;     
   reg   IntE;           
-  reg   stop;           
+  reg   stop;          
 
   parameter     aNone    = 3'b111;
   parameter     aBC      = 3'b000;
@@ -317,7 +321,7 @@ module tv80_core (/*AUTOARG*/
       endcase
     end
   endfunction
-  
+
   always @(/*AUTOSENSE*/mcycle or mcycles or tstate or tstates)
     begin
       case (mcycles)
@@ -343,7 +347,6 @@ module tv80_core (/*AUTOARG*/
       endcase
     end // always @ (...
   
-          
   always @(/*AUTOSENSE*/ALU_Q or BusAck or BusB or DI_Reg
 	   or ExchangeRp or IR or Save_ALU_r or Set_Addr_To or XY_Ind
 	   or XY_State or cen or last_tstate or mcycle)
@@ -404,6 +407,12 @@ module tv80_core (/*AUTOARG*/
           PreserveC_r <= #1 1'b0;
           XY_Ind <= #1 1'b0;
         end 
+      else if (dirset == 1'b1)
+        begin
+            $display( "(before PC %x)", PC);
+            PC <= dir;
+            $display( "(after PC %x)", PC);
+        end
       else 
         begin
 
