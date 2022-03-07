@@ -406,7 +406,7 @@ int main(int argc, char** argv, char** env) {
       // action
 fprintf(stderr,"filePathName: %s\n",filePathName.c_str());
 fprintf(stderr,"filePath: %s\n",filePath.c_str());
-     bus.QueueDownload(filePathName, 1,0);
+     bus.QueueDownload(filePathName, 1,1);
     }
    
     // close
