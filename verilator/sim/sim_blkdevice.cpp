@@ -24,8 +24,8 @@ CData* sd_buff_dout=NULL;
 CData* sd_buff_din[kVDNUM]= {NULL,NULL,NULL,NULL,NULL,
                    NULL,NULL,NULL,NULL,NULL};
 CData* sd_buff_wr=NULL;
-CData* img_mounted=NULL;
-SData* img_readonly=NULL;
+SData* img_mounted=NULL;
+CData* img_readonly=NULL;
 QData* img_size=NULL;
 
 
@@ -38,13 +38,16 @@ QData* img_size=NULL;
 void SimBlockDevice::MountDisk( std::string file, int index) {
 	disk[index].open(file.c_str(), std::ios::out | std::ios::in | std::ios::binary | std::ios::ate);
         if (disk[index]) {
+		fprintf(stderr,"we are here\n");
            // we shouldn't do the actual mount here..
            disk_size[index]= disk[index].tellg();
 	//fprintf(stderr,"mount size %ld\n",disk_size[index]);
            disk[index].seekg(0);
            mountQueue[index]=1;
            printf("disk %d inserted (%s)\n",index,file.c_str());
-        }
+        }else {
+		fprintf(stderr,"some kind of error: %s\n",file.c_str());
+	}
 
 }
 
@@ -62,6 +65,8 @@ void SimBlockDevice::BeforeEval(int cycles)
  for (int i=0; i<kVDNUM;i++)
  {
 
+//fprintf(stderr,"current_disk = %d *sd_rd %x ack_delay %x reading %d writing %d\n",current_disk,*sd_rd,ack_delay,reading,writing);
+
     if (current_disk == i) {
     // send data
     if (ack_delay==1) {
@@ -69,21 +74,27 @@ void SimBlockDevice::BeforeEval(int cycles)
          *sd_buff_dout = disk[i].get();
          *sd_buff_addr = bytecnt++;
          *sd_buff_wr= 1;
-         printf("cycles %x reading %X : %X ack %x\n",cycles,*sd_buff_addr,*sd_buff_dout,*sd_ack );
-      } else if(writing && *sd_buff_addr != bytecnt && (bytecnt < kBLKSZ)) {
+         //printf("cycles %x reading %X : %X ack %x\n",cycles,*sd_buff_addr,*sd_buff_dout,*sd_ack );
+      } else if(writing && *sd_buff_addr != bytecnt && (*sd_buff_addr< kBLKSZ)) {
       //} else if(writing && (bytecnt < kBLKSZ)) {
-  	printf("writing disk %i at sd_buff_addr %x data %x ack %x\n",i,*sd_buff_addr,*sd_buff_din[i],*sd_ack);
+  	//printf("writing disk %i at sd_buff_addr %x data %x ack %x\n",i,*sd_buff_addr,*sd_buff_din[i],*sd_ack);
         disk[i].put(*(sd_buff_din[i]));
         *sd_buff_addr = bytecnt;
       } else {
 	  *sd_buff_wr=0;
 
-        if(bytecnt != kBLKSZ) {
-		if (writing) {
-			  bytecnt++;
-		}
-        } else {
-          reading = writing = 0;
+	  if (writing) {
+		  if (bytecnt>=kBLKSZ) {
+			  writing=0;
+			  //printf("writing stopped: bytecnt %x sd_buff_addr %x \n",bytecnt,*sd_buff_addr);
+		  }
+		  if (bytecnt<kBLKSZ)
+		  	bytecnt++;
+	  }
+	  else if (reading) {
+        	if(bytecnt == kBLKSZ) {
+         	 	reading = 0;
+        	} 
         }
       }
     } else {
@@ -93,24 +104,24 @@ void SimBlockDevice::BeforeEval(int cycles)
 
     // issue a mount if we aren't doing anything, and the img_mounted has no bits set
     if (!reading && !writing && mountQueue[i] && !*img_mounted) {
-//fprintf(stderr,"mounting.. %d\n",i);
+fprintf(stderr,"mounting.. %d\n",i);
            mountQueue[i]=0;
            *img_size = disk_size[i];
 	   *img_readonly=0;
-//fprintf(stderr,"img_size .. %ld\n",*img_size);
+fprintf(stderr,"img_size .. %ld\n",*img_size);
            disk[i].seekg(0);
            bitset(*img_mounted,i);
            ack_delay=1200;
     } else if (ack_delay==1 && bitcheck(*img_mounted,i) ) {
-//fprintf(stderr,"mounting flag cleared  %d\n",i);
+fprintf(stderr,"mounting flag cleared  %d\n",i);
         bitclear(*img_mounted,i) ;
         //*img_size = 0;
-    }
+    } else { if (!reading && !writing && ack_delay>0) ack_delay--; }
 
     // start reading when sd_rd pulses high
     if ((current_disk==-1 || current_disk==i) && (bitcheck(*sd_rd,i) || bitcheck(*sd_wr,i) )) {
        // set current disk here..
-//fprintf(stderr,"setting current disk %d %x\n",i,*sd_rd);
+//fprintf(stderr,"setting current disk %d %x ack_delay %x\n",i,*sd_rd,ack_delay);
        current_disk=i;
       if (!ack_delay) {
         int lba = *(sd_lba[i]);
@@ -123,8 +134,9 @@ void SimBlockDevice::BeforeEval(int cycles)
 
         disk[i].clear();
         disk[i].seekg((lba) * kBLKSZ);
-        printf("seek %06X lba: (%x) (%d,%d) drive %d reading %d writing %d ack %x\n", (lba) * kBLKSZ,lba,lba,kBLKSZ,i,reading,writing,*sd_ack);
+      //  printf("seek %06X lba: (%x) (%d,%d) drive %d reading %d writing %d ack %x\n", (lba) * kBLKSZ,lba,lba,kBLKSZ,i,reading,writing,*sd_ack);
         bytecnt = 0;
+        *sd_buff_addr = 0;
         ack_delay = 1200;
       }
     }
@@ -139,6 +151,8 @@ void SimBlockDevice::BeforeEval(int cycles)
       }
       if((ack_delay > 1) || ((ack_delay == 1) && !reading && !writing))
         ack_delay--;
+      if (ack_delay==0 && !reading && !writing) 
+	current_disk=-1;
     }
   }
 }

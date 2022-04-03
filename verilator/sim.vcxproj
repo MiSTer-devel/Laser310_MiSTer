@@ -70,6 +70,7 @@
     <ClCompile Include="sim\imgui\ImGuiFileDialog.cpp" />
     <ClCompile Include="sim\imgui\implot.cpp" />
     <ClCompile Include="sim\imgui\implot_items.cpp" />
+    <ClCompile Include="sim\sim_blkdevice.cpp" />
     <ClCompile Include="sim\vinc\verilated.cpp" />
     <ClCompile Include="sim\vinc\verilated_save.cpp" />
     <ClCompile Include="sim\vinc\verilated_vcd_c.cpp" />

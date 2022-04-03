@@ -191,7 +191,7 @@ int main(int argc, char** argv, char** env) {
 
 #ifdef WIN32
 	// Attach debug console to the verilated code
-	Verilated::setDebug(console);
+	//Verilated::setDebug(console);
 #endif
 
 	// Attach bus

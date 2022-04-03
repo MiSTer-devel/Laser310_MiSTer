@@ -354,7 +354,7 @@ void VerilatedVcd::dumpHeader() {
     {
         time_t tick = time(nullptr);
         tm ticktm;
-        VL_LOCALTIME_R(&tick, &ticktm);
+       // VL_LOCALTIME_R(&tick, &ticktm);
         constexpr int bufsize = 50;
         char buf[bufsize];
         std::strftime(buf, bufsize, "%c", &ticktm);
