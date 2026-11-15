@@ -46,3 +46,11 @@ public_flat_rd -module "tv80_core" -var "PC"
 public_flat_rd -module "tv80_core" -var "SP"
 public_flat_rw -module "sprom" -var "d"
 public_flat_rw -module "RESET_DE" -var "RESET_COUNT"
+
+// floppy (rtl/vz_floppy.sv)
+public_flat_rd -module "vz_floppy" -var "ready"
+public_flat_rd -module "vz_floppy" -var "ptrk"
+public_flat_rd -module "vz_floppy" -var "latch"
+public_flat_rd -module "vz_floppy" -var "s"
+public_flat_rd -module "vz_floppy" -var "sectors_written"
+public_flat_rd -module "vz_floppy" -var "dirty"

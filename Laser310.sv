@@ -183,7 +183,6 @@ assign BUTTONS = 0;
 assign AUDIO_S = 1;
 assign AUDIO_MIX = 0;
 
-assign LED_DISK  = LED;						/* later add disk motor on/off */
 assign LED_POWER = 0;
 assign LED_USER  = LED2/*ioctl_download*/;
 
@@ -202,13 +201,15 @@ localparam CONF_STR = {
         "-;",
         "F1,VZ ,Load VZ Image;",
         "S0,WAVCAS,Tape;",
+        "S1,DSK,Disk 1;",
+        "S2,DSK,Disk 2;",
         "-;",
         "OK,Video standard,PAL (50 Hz),NTSC (60 Hz);",
         "O89,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	     "O24,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
 
         "O5,Turbo,Off,On;",
-        "O6,Dos Rom,Off,On;",
+        "O6,Disk drives (DOS),Off,On;",
         "O7,SHRG,On,Off;",
         "OB,Load hints,On,Off;",
         "OC,Tape speed,3x,Normal;",
@@ -247,17 +248,24 @@ wire [15:0] joystick_0, joystick_1;
 
 
 // tape image slot and the OSD info message on mount ("I," in CONF_STR)
-wire        img_mounted, img_readonly;
+// S0 tape, S1/S2 floppy drives 1 and 2 (rtl/vz_floppy.sv)
+wire  [2:0] img_mounted;
+wire        img_readonly;
 wire [63:0] img_size;
-wire [31:0] sd_lba;
-wire        sd_rd, sd_ack, sd_buff_wr;
+wire [31:0] sd_lba, disk_sd_lba;
+wire  [2:0] sd_ack;
+wire        sd_rd, sd_buff_wr;
+wire  [1:0] disk_sd_rd, disk_sd_wr;
+wire  [7:0] disk_sd_buff_din;
+wire        disk_activity;
+assign LED_DISK  = {1'b0, LED | disk_activity};   // drive selected or .VZ loading
 wire [13:0] sd_buff_addr;
 wire  [7:0] sd_buff_dout;
 wire        tape_ready, tape_bad;
 reg         info_req;
 reg   [7:0] info;
 
-hps_io #(.CONF_STR(CONF_STR), .PS2DIV(32)/*, .WIDE(0)*/) hps_io
+hps_io #(.CONF_STR(CONF_STR), .PS2DIV(32), .VDNUM(3)) hps_io
 (
         .clk_sys(clk_sys),
         .HPS_BUS(HPS_BUS),
@@ -278,17 +286,18 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(32)/*, .WIDE(0)*/) hps_io
         .ioctl_index(ioctl_index),
         .ps2_key(ps2_key),
 
-        // tape image (S0)
+        // tape (S0), disks (S1, S2)
         .img_mounted(img_mounted),
+        .img_readonly(img_readonly),
         .img_size(img_size),
-        .sd_lba('{sd_lba}),
-        .sd_blk_cnt('{6'd0}),
-        .sd_rd(sd_rd),
-        .sd_wr(1'b0),
+        .sd_lba('{sd_lba, disk_sd_lba, disk_sd_lba}),
+        .sd_blk_cnt('{6'd0, 6'd0, 6'd0}),
+        .sd_rd({disk_sd_rd, sd_rd}),
+        .sd_wr({disk_sd_wr, 1'b0}),
         .sd_ack(sd_ack),
         .sd_buff_addr(sd_buff_addr),
         .sd_buff_dout(sd_buff_dout),
-        .sd_buff_din('{8'd0}),
+        .sd_buff_din('{8'd0, disk_sd_buff_din, disk_sd_buff_din}),
         .sd_buff_wr(sd_buff_wr),
 
         .info_req(info_req),
@@ -377,16 +386,24 @@ LASER310_TOP LASER310_TOP(
         .tape_invert(status[17]),
         .tape_pitch((status[19:18] == 2'd0 ? 2'd3 : status[19:18] - 2'd1)),   // OSD Auto (default) / Normal / +6% / +12%
         .tape_rewind(status[15]),
-        .img_mounted(img_mounted),
+        .img_mounted(img_mounted[0]),
         .img_size(img_size),
         .sd_lba(sd_lba),
         .sd_rd(sd_rd),
-        .sd_ack(sd_ack),
+        .sd_ack(sd_ack[0]),
         .sd_buff_addr(sd_buff_addr[8:0]),
         .sd_buff_dout(sd_buff_dout),
         .sd_buff_wr(sd_buff_wr),
         .tape_ready(tape_ready),
-        .tape_bad(tape_bad)
+        .tape_bad(tape_bad),
+        .disk_img_mounted(img_mounted[2:1]),
+        .img_readonly(img_readonly),
+        .disk_sd_lba(disk_sd_lba),
+        .disk_sd_rd(disk_sd_rd),
+        .disk_sd_wr(disk_sd_wr),
+        .disk_sd_ack(sd_ack[2:1]),
+        .disk_sd_buff_din(disk_sd_buff_din),
+        .disk_activity(disk_activity)
 
         );
 

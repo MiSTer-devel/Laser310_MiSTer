@@ -120,7 +120,16 @@ input [8:0] sd_buff_addr,
 input [7:0] sd_buff_dout,
 input sd_buff_wr,
 output tape_ready,			// pulse: tape mounted/rewound and playable
-output tape_bad			// pulse: tape format not supported
+output tape_bad,			// pulse: tape format not supported
+// floppy drives 1 and 2 (hps_io S1/S2); img_size, sd_buff_* shared with the tape
+input  [1:0] disk_img_mounted,
+input        img_readonly,
+output [31:0] disk_sd_lba,
+output [1:0] disk_sd_rd,
+output [1:0] disk_sd_wr,
+input  [1:0] disk_sd_ack,
+output [7:0] disk_sd_buff_din,
+output       disk_activity
 
 ); 
 
@@ -623,7 +632,7 @@ assign RAM_CDEF_WR		= ({ADDRESS_CDEF,MEM_OP_WR,CPU_WR,CPU_IORQ} == 4'b1110)?1'b1
 assign CPU_DI = 	
 				ADDRESS_ROM		? SYS_ROM_DATA		:
 				ADDRESS_AUTOSTARTROM	? AUTOSTART_ROM_DATA	:
-				ADDRESS_DOSROM		? DOS_ROM_DATA		:
+				ADDRESS_DOSROM		? DOS_ROM_DATA_P	:
 				ADDRESS_RAM_78		? RAM_78_DATA		:
 `ifdef BOOT_ROM_6000
 				ADDRESS_BOOTROM_6000	? BOOT_ROM_6000_DATA	:
@@ -689,6 +698,13 @@ DOS_ROM(
 	.q(DOS_ROM_DATA)
 	);
 `endif
+// VZ DOS 1.2 patch, as MAME (bus/vtech/memexp/floppy.cpp device_start): two
+// sector-read wait loops at 5673h/5683h jump back onto their IN A,(11h), so
+// while they wait for a flux they keep clearing the controller's flip-flop and
+// shifting junk into the byte. MAME: "Obvious bugs... must have worked by
+// sheer luck and very subtle timings". JP P,5675h / 5685h loop on IN A,(C) only.
+wire [7:0] DOS_ROM_DATA_P = (CPU_A[12:0] == 13'h1678) ? 8'h75 :
+                            (CPU_A[12:0] == 13'h1688) ? 8'h85 : DOS_ROM_DATA;
 
 //====================================================================
 
@@ -1510,104 +1526,46 @@ assign audio_s = SND_SPK + SND_TIN + SND_TOUT;
 assign AUD_ADCDAT = {LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[5]};
 
 
-// floppy
-wire				ADDRESS_IO_FDC;
-wire				ADDRESS_IO_FDC_CT;
-wire				ADDRESS_IO_FDC_DATA;
-wire				ADDRESS_IO_FDC_POLL;
-wire				ADDRESS_IO_FDC_WP;
-reg		[7:0]		LATCHED_IO_FDC;
-reg		[7:0]		LATCHED_IO_FDC_CT;
-reg		[7:0]		LATCHED_RAM_DATA_FDC;
+// ---------------------------------------------------------------------------
+// Floppy controller and two drives (rtl/vz_floppy.sv), fitted with the DOS ROM
+// (OSD Dos Rom On). Replaces the DD20 board's FDC_IF (rtl/fdc.v), which was
+// never connected to the CPU.
+// ---------------------------------------------------------------------------
+reg  CPU_TICK_OLD;
+always @(posedge CLK42MHZ) CPU_TICK_OLD <= GCLK;
+wire CPU_TICK = GCLK & ~CPU_TICK_OLD;		// one pulse per CPU T-state
+wire [7:0] FDC_DOUT;
+wire ADDRESS_IO_FDC = LATCHED_DOSROM_EN && CPU_A[7:2] == 6'b000100;
 
-// floppy
-(*keep*)wire					FDC_RAM_R;
-(*keep*)wire					FDC_RAM_W;
-(*keep*)wire		[17:0]		FDC_RAM_ADDR_R;
-(*keep*)wire		[17:0]		FDC_RAM_ADDR_W;
-reg			[7:0]		LAST_WRITE_DATA;
-(*keep*)wire		[7:0]		FDC_RAM_DATA_W;
-
-(*keep*)wire	[7:0]		FLOPPY_RD_DATA;
-(*keep*)wire	[7:0]		FLOPPY_DATA;
-
-// FDC
-//				if({CPU_IORQ,CPU_RD,CPU_WR,ADDRESS_IO_FDC_CT}==4'b1011)
-//					LATCHED_IO_FDC_CT	<=	CPU_DO;
-
-//				if({CPU_IORQ,CPU_RD,CPU_WR}==3'b110)
-//					LATCHED_IO_FDC	<=	ADDRESS_IO_FDC_POLL	?	{FDC_POLL, 7'h7F}	:
-//										ADDRESS_IO_FDC_DATA	?	FDC_DATA			:
-//										ADDRESS_IO_FDC_WP	?	{FDC_WP, 7'h7F}		:
-//										8'hFF;
-wire FLOPPY_WP_READ	= 1'b0;
-wire RAM_ADDRESS_FD_R	=		FDC_RAM_ADDR_R;
-wire RAM_ADDRESS_FD_W	=		FDC_RAM_ADDR_W;
-
-assign ADDRESS_IO_FDC	=	(CPU_A[7:2] == 6'b000100)?1'b1:1'b0;
-
-assign ADDRESS_IO_FDC_CT	=	(CPU_A[7:0] == 8'h10)?1'b1:1'b0;
-assign ADDRESS_IO_FDC_DATA	=	(CPU_A[7:0] == 8'h11)?1'b1:1'b0;
-assign ADDRESS_IO_FDC_POLL	=	(CPU_A[7:0] == 8'h12)?1'b1:1'b0;
-assign ADDRESS_IO_FDC_WP	=	(CPU_A[7:0] == 8'h13)?1'b1:1'b0;
-
-
-wire	[7:0]		FDC_DATA;
-wire				FDC_POLL;
-wire				FDC_WP;
-
-wire	[7:0]		SECTOR_BYTE;
-wire	[7:0]		TRACK1_NO;
-wire	[7:0]		TRACK2_NO;
-wire				DRIVE1;
-wire				DRIVE2;
-wire				MOTOR;
-
-wire		FDC_IO_R;
-wire		FDC_IO_W;
-
-wire		FDC_SIG;
-wire		FDC_SIG_CLK;
-
-wire FDC_IO		=	(CPU_IORQ&ADDRESS_IO_FDC);
-wire FDC_IO_POLL	=	(CPU_IORQ&ADDRESS_IO_FDC_POLL);
-wire FDC_IO_DATA	=	(CPU_IORQ&ADDRESS_IO_FDC_DATA);
-wire FDC_IO_CT	=	(CPU_IORQ&ADDRESS_IO_FDC_CT);
-
-FDC_IF FDC_U (
-	.FDC_CLK(CPU_CLK),
-	.RESET_N(RESET_N),
-	.SW(SWITCH[3:2]),
-	.DBG(SWITCH[9:6]),
-
-	.FDC_RAM_R(FDC_RAM_R),
-	.FDC_RAM_W(FDC_RAM_W),
-	.FDC_RAM_ADDR_R(FDC_RAM_ADDR_R),
-	.FDC_RAM_ADDR_W(FDC_RAM_ADDR_W),
-	.FDC_RAM_DATA_R(LATCHED_RAM_DATA_FDC),
-	.FDC_RAM_DATA_W(FDC_RAM_DATA_W),
-
-	.FDC_IO(FDC_IO),
-	.FDC_IO_POLL(FDC_IO_POLL),
-	.FDC_IO_DATA(FDC_IO_DATA),
-	.FDC_IO_CT(FDC_IO_CT),
-
-	.FDC_SIG(FDC_SIG),
-	.FDC_SIG_CLK(FDC_SIG_CLK),
-
-	.FDC_CT(LATCHED_IO_FDC_CT),
-	.FDC_DATA(FDC_DATA),
-	.FDC_POLL(FDC_POLL),
-	.FDC_WP(FDC_WP),
-
-	.FLOPPY_SECTOR_BYTE(SECTOR_BYTE),
-	.TRACK1_NO(TRACK1_NO),
-	.TRACK2_NO(TRACK2_NO),
-	.DRIVE1(DRIVE1),
-	.DRIVE2(DRIVE2),
-	.MOTOR(MOTOR)
+vz_floppy floppy (
+	.clk(CLK42MHZ),
+	.reset(~RESET_N),
+	.enable(LATCHED_DOSROM_EN),
+	.cpu_tick(CPU_TICK),
+	.cpu_addr(CPU_A[7:0]),
+	.cpu_iorq_n(CPU_IORQ_N),
+	.cpu_rd_n(CPU_RD_N),
+	.cpu_wr_n(CPU_WR_N),
+	.cpu_m1_n(CPU_M1_N),
+	.cpu_dout(CPU_DO),
+	.io_dout(FDC_DOUT),
+	.img_mounted(disk_img_mounted),
+	.img_readonly(img_readonly),
+	.img_size(img_size),
+	.sd_lba(disk_sd_lba),
+	.sd_rd(disk_sd_rd),
+	.sd_wr(disk_sd_wr),
+	.sd_ack(disk_sd_ack),
+	.sd_buff_addr(sd_buff_addr),
+	.sd_buff_dout(sd_buff_dout),
+	.sd_buff_din(disk_sd_buff_din),
+	.sd_buff_wr(sd_buff_wr),
+	.activity(disk_activity),
+	.loaded(),
+	.track0(),
+	.track1(),
+	.sectors_written()
 );
-
 
 // PAGE 10 from tech manual
 // alanswx
@@ -1628,8 +1586,9 @@ wire [7:0] CPU_D_INPORT    =
     (ADDRESS_JOYSTICK_1_A ? JOYSTICK_1_DATA_A : 8'hff) &
     (ADDRESS_JOYSTICK_1_B ? JOYSTICK_1_DATA_B : 8'hff) &
     (ADDRESS_JOYSTICK_2_A ? JOYSTICK_2_DATA_A : 8'hff) &
-    (ADDRESS_JOYSTICK_2_B ? JOYSTICK_2_DATA_B : 8'hff)) : 
-    	8'hzz;
+    (ADDRESS_JOYSTICK_2_B ? JOYSTICK_2_DATA_B : 8'hff)) :
+	ADDRESS_IO_FDC ? FDC_DOUT :
+    	8'hff;			// unmapped ports read FFh (MAME unmap_value_high)
 
 
 wire ADDRESS_JOYSTICK = ( CPU_A[7:4]  == 4'b0010 )?1'b1:1'b0;

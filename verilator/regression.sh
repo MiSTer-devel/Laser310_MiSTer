@@ -86,7 +86,27 @@ if need $FLAPPY/flappy.cas tape-mount; then
     run tape-overlay-off --stop-at-frame 60 --tape $FLAPPY/flappy.cas --status-bit 13=1 --expect-tape-hint 60:none
 fi
 
+# Floppy (rtl/vz_floppy.sv): VZ DOS DIR, RUN from disk, SAVE + reload, write protect
+DD=../refs/emulators/zzemu-cn_LASER310_FPGA_DD20/software
+BLANK=../refs/emulators/paulscottrobson_vz-next-2/vzem/blank.dsk
+if need $DD/INVADERS.dsk disk-dir; then
+    run disk-dir --stop-at-frame 450 --disk1 $DD/INVADERS.dsk --send-keys '120:DIR\n' --expect-text 450:'T:INVADERS'
+    run disk-drive2 --stop-at-frame 600 --disk1 $BLANK --disk2 $DD/INVADERS.dsk --send-keys '120:DRIVE2\n\PDIR\n' --expect-text 600:'T:INVADERS'
+fi
+if need $BLANK disk-save; then
+    run disk-wp --stop-at-frame 800 --disk1 $BLANK --disk1-ro --send-keys '120:10 PRINT\n\PSAVE"X"\n' --expect-text 800:'?DISK WRITE PROTECTED'
+fi
 if [ $FULL = 1 ]; then
+    if need $DD/INVADERS.dsk disk-run; then
+        run disk-run --stop-at-frame 1500 --disk1 $DD/INVADERS.dsk --send-keys '120:RUN"INVADERS"\n' --expect-text 1500:'PRESS  <S> TO START'
+    fi
+    if need $BLANK disk-save; then
+        run disk-save --stop-at-frame 1100 --disk1 $BLANK --disk1-save $OUT/disk-save.dsk --send-keys '120:10 PRINT"SAVED OK"\n\PSAVE"TEST"\n'
+        run disk-reload --stop-at-frame 900 --disk1 $OUT/disk-save.dsk --send-keys '120:DIR\n\P\PRUN"TEST"\n' --expect-text 900:'T:TEST' --expect-text 900:'SAVED OK'
+        python3 tools/vzdsk.py $OUT/disk-save.dsk | grep -q " 0 checksum errors" && grep -q "99184 bytes" <(python3 tools/vzdsk.py $OUT/disk-save.dsk) \
+            && echo "     saved image: same size, all checksums good" || { echo "FAIL disk-save image"; fail=$((fail+1)); }
+    fi
+
     # CLOAD through the core's player (deck starts by itself, 3x), RAM == .vz body,
     # status bar while loading, "TYPE RUN" after, Rewind brings back "TYPE CRUN"
     for t in cas wav; do

@@ -57,7 +57,7 @@ V_SRC = \
 	$(RTL)/VIDEO_OUT.v \
 	$(RTL)/SVGA_DEFINES.v \
 	$(RTL)/SVGA_TIMING_GENERATION.v \
-	$(RTL)/fdc.v \
+	$(RTL)/vz_floppy.sv \
 	$(RTL)/6847/mc6847.v \
 	$(RTL)/6847/rom_char.v \
 	$(RTL)/reset_de.v \
@@ -104,7 +104,7 @@ HL_EXE   = $(HL_DIR)/Vemu
 HL_VSRC  = sim_public.vlt $(filter-out $(RTL)/mc6847_vga.v $(RTL)/PIXEL_DISPLAY.v $(RTL)/CHAR_GEN.v $(RTL)/PIXEL_GEN.v $(RTL)/VIDEO_OUT.v $(RTL)/SVGA_DEFINES.v $(RTL)/SVGA_TIMING_GENERATION.v $(RTL)/LaserKeyboard.sv,$(V_SRC)) $(RTL)/dpram.sv
 HL_CSRC  = sim_headless.cpp
 HL_VFLAGS = -O3 --no-timing --x-assign fast --x-initial fast --noassert -Wno-fatal -Wno-lint -Wno-style \
-	--timescale-override 1ps/1ps -Wno-TIMESCALEMOD +define+SIMULATION=1 -I$(RTL) -I$(RTL)/tv80
+	--timescale-override 1ps/1ps -Wno-TIMESCALEMOD +define+SIMULATION=1 -I$(RTL) -I$(RTL)/tv80 $(HL_DEFS)
 HL_CFLAGS = -O2 -std=c++17 -I$(CURDIR)/sim
 ifeq ($(TRACE),1)
 HL_VFLAGS += --trace-fst

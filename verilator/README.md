@@ -43,6 +43,7 @@ Output lines are prefixed for grepping: `TEXT`, `SHOT`, `FBHASH`, `STATS`,
 | group | options |
 |---|---|
 | run | `--stop-at-frame N`, `--reset-at-frame N`, `--stop-at-pc ADDR`, `--break-pc ADDR`, `--quiet` |
+| disks | `--disk1 F[@FRAME]`, `--disk2 F[@FRAME]` (S1/S2, imply `--dos-rom`), `--disk1-ro`, `--disk2-ro`, `--disk1-save F`, `--disk2-save F` (image with the core's writes, at exit); the harness serves reads and writes of 512-byte blocks like hps_io |
 | OSD | `--status HEX`, `--status-bit N=V`, `--turbo` (O5), `--dos-rom` (O6), `--shrg on\|off` (O7, default On), `--sysrom F`, `--dosrom F` (sim only) |
 | media | `--vz FILE[@FRAME]`, `--ioctl FRAME:INDEX:FILE`, `--tape F.cas\|F.wav` (mounted in the core's Tape slot, streamed by `rtl/vz_tape.sv`), `--tape-mount-frame N`, `--sd-latency CLOCKS`, `--tape-rewind FRAME`; tape OSD rows as `--status-bit` 12 (Speed Normal), 13 (Overlay Off), 14 (Audio On), 16 (Deck Play), 17 (Polarity Inverted), 18-19 (Pitch: 0 Auto default, 1 Normal, 2 +6%, 3 +12%); `--tape-direct F` bypasses the player (harness comparator, with `--tape-frame/--tape-speed/--tape-threshold/--tape-invert`) |
 | input | `--send-keys FRAME:TEXT` (`\n` `\b` `\e`=BREAK `\U\D\L\R` `\^X` `\\` `\p` `\P`), `--key-hold N`, `--key-gap N`, `--hold-key FRAME:NAME:N`, `--joy FRAME:HEX`, `--joy2 FRAME:HEX` (bits 0 R 1 L 2 D 3 U 4 fire 5 arm) |
@@ -61,11 +62,17 @@ semigraphics shown as `#` (80h as space). It is only meaningful in text mode.
   generated machine-code `.vz` counts low samples with interrupts off: 18% PAL,
   12% NTSC), semigraphic colour blocks (frame hash), SOUND output swinging both ways,
   `.VZ` load + RUN (with the load hint shown, then removed by Return), hint Off,
-  machine-code `.VZ` autostart; `--full` adds CLOAD from flappy `.cas` and `.wav` with a RAM
-  compare. Test files come from `../software` (git-ignored); missing ones are skipped.
+  machine-code `.VZ` autostart, floppy `DIR` (drive 1 and 2) and write protect;
+  `--full` adds CLOAD from flappy `.cas` and `.wav` with a RAM compare, `RUN` from disk,
+  and `SAVE` to a blank disk then reboot, `RUN` it, and check the image. Test files come from `../software` (git-ignored); missing ones are skipped.
 - `run_library.py DIR [--filter RE] [-j N] [--frames N] [--out DIR]`: every `.vz`
   under DIR (deduplicated by SHA-1), screenshots + `report.md`/`results.json`,
   classified ok / static / ready / error / crash.
+- `run_disks.py DIR.. [--filter RE] [-j N]`: `DIR` of every `.dsk` (deduplicated) through
+  the core's floppy controller; listed / empty / error / hang, compared with the
+  software directory read of `tools/vzdsk.py`.
+- `tools/vzdsk.py IMG [IMG2]`: parse a `.dsk` like MAME, sector count, checksum errors,
+  directory; with two images, the sectors that differ.
 - `run_tapes.py DIR [--sample N] [--filter RE] [-j N]`: CLOAD real tapes through the core's
   player; ok (ROM verified the checksum, PC 36BBh) / error (LOADING ERROR, 3711h) /
   nofile, each failure retried with Tape polarity Inverted. Uses the list from:

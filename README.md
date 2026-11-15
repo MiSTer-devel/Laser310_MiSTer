@@ -23,6 +23,15 @@ Mount a `.wav` or `.cas` in the OSD **Tape** slot, then type `CLOAD` (BASIC) or 
 - **Rewind tape** goes back to the start.
 - `CSAVE` is not supported yet.
 
+# Floppy disks
+
+Set **Disk drives (DOS)** On (then reset) to fit the DD20 / DI-40 disk interface: VZ DOS 1.2 at 4000h and two drives. Mount `.dsk` images in **Disk 1** and **Disk 2**. At the `DOS BASIC V1.2` prompt use the DOS commands: `DIR`, `RUN"NAME"` (BASIC, `T:` files), `BRUN"NAME"` (machine code, `B:` files), `LOAD`, `SAVE"NAME"`, `ERA`, `REN`, `INIT` (format), `DRIVE 1`/`DRIVE 2`, `STATUS`.
+
+- **Images:** every `.dsk` variant in circulation works (98,560, 99,184, 99,185 bytes and the odd sizes in between): the image is read at mount like MAME does, by finding each sector's header and data marks, so extra or missing gap bytes don't matter.
+- **Writing:** `SAVE`, `ERA`, `INIT` etc. write to the image file on the SD card. Each written sector (128 bytes and its checksum) goes back in place, so the file keeps its own layout and size and stays readable by other emulators. A disk mounted read-only is write protected (`?DISK WRITE PROTECTED`).
+- **Timing:** the controller is modelled at the flux level, like the real board and MAME: the drive delivers a bit every 115 CPU cycles and the DOS reads it by polling, so other disk software (copy programs, custom loaders) sees the same signals. With Turbo the disk speeds up with the CPU.
+- VZ DOS 1.2 has two wait loops that only worked on the real machine by luck of timing; the core patches them the same way MAME does (two bytes, at 5678h and 5688h).
+
 # Video and sound
 
 - **Video standard:** PAL (50 Hz, the default) gives the 312-line field of the VZ300 / Laser 310 and PAL VZ200: the 6847's 262-line field padded with 25 border lines above and 25 below, as the PAL machines do. NTSC (60 Hz) is the Laser 200 / NTSC VZ200 timing. Games timed by the frame interrupt run at their intended speed only with the right standard; most VZ software was written for PAL. Lines are 228 CPU cycles (59,736 cycles per frame NTSC, 71,136 PAL). The CPU clock is 3.5795 MHz in both; a real VZ300 runs 0.9% slower (3.5469 MHz), which also slows its video by the same amount.
@@ -51,4 +60,3 @@ Tweaked display parameters slightly.
 # TODO
 
 * cassette save (CSAVE)
-* floppy support

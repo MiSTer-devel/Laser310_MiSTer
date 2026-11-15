@@ -94,13 +94,13 @@ module emu (
 	input [7:0]		ioctl_index,
 	output reg		ioctl_wait=1'b0,
 
-	output [31:0] 		sd_lba[2],
+	output [31:0] 		sd_lba[3],		// 0 tape, 1/2 disks
 	output [9:0] 		sd_rd,
 	output [9:0] 		sd_wr,
 	input [9:0] 		sd_ack,
 	input [8:0] 		sd_buff_addr,
 	input [7:0] 		sd_buff_dout,
-	output [7:0] 		sd_buff_din[2],
+	output [7:0] 		sd_buff_din[3],
 	input 			sd_buff_wr,
 	input [9:0] 		img_mounted,
 	input 			img_readonly,
@@ -142,11 +142,17 @@ always @(posedge CLK_VIDEO) begin
 	div <= ~div;
 	ce_pix <=  &div ;
 end
-wire [15:0] hdd_sector;
-
-assign sd_lba[1] = {16'b0,hdd_sector};
-assign sd_rd[9:1] = 9'd0;
-assign sd_wr = 10'd0;
+wire [31:0] disk_sd_lba;
+wire  [1:0] disk_sd_rd, disk_sd_wr;
+wire  [7:0] disk_sd_buff_din;
+assign sd_lba[1] = disk_sd_lba;
+assign sd_lba[2] = disk_sd_lba;
+assign sd_rd[9:3] = 7'd0;
+assign sd_rd[2:1] = disk_sd_rd;
+assign sd_wr = {7'd0, disk_sd_wr, 1'b0};
+assign sd_buff_din[0] = 8'd0;
+assign sd_buff_din[1] = disk_sd_buff_din;
+assign sd_buff_din[2] = disk_sd_buff_din;
 
 wire led;
 wire hbl,vbl;
@@ -234,7 +240,15 @@ LASER310_TOP LASER310_TOP(
         .sd_buff_dout(sd_buff_dout),
         .sd_buff_wr(sd_buff_wr),
         .tape_ready(),
-        .tape_bad()
+        .tape_bad(),
+        .disk_img_mounted(img_mounted[2:1]),
+        .img_readonly(img_readonly),
+        .disk_sd_lba(disk_sd_lba),
+        .disk_sd_rd(disk_sd_rd),
+        .disk_sd_wr(disk_sd_wr),
+        .disk_sd_ack(sd_ack[2:1]),
+        .disk_sd_buff_din(disk_sd_buff_din),
+        .disk_activity()
 
         );
 

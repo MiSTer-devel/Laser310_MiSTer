@@ -85,6 +85,7 @@ static struct Opts {
     string sysrom, dosrom;
 
     string tape_sd; long tape_mount_frame = 5; long sd_latency = 20000; vector<long> rewind_frames;
+    string disk[2], disk_save[2]; long disk_frame[2] = {3, 4}; bool disk_ro[2] = {false, false};
     vector<std::pair<long,int>> expect_tape_hint; vector<std::pair<long,bool>> expect_bar;
     string tape; long tape_frame = -1; double tape_speed = 0; bool tape_invert = false;
     int tape_threshold = 1310; // +0.04 of full scale, like MAME vtech1.cpp
@@ -411,7 +412,7 @@ static void usage() {
 "  --status HEX                 raw status word\n"
 "  --status-bit N=V             set one status bit\n"
 "  --turbo                      O5 Turbo On (CPU 3x)\n"
-"  --dos-rom                    O6 Dos Rom On (VZ DOS at 4000h)\n"
+"  --dos-rom                    O6 Disk drives (DOS) On: VZ DOS at 4000h + controller\n"
 "  --shrg on|off                O7 SHRG (default On)\n"
 "  --sysrom FILE / --dosrom FILE  replace BASIC / DOS ROM contents (sim only)\n"
 "Media\n"
@@ -421,6 +422,11 @@ static void usage() {
 "                               (rtl/vz_tape.sv) streams it sector by sector; the deck plays\n"
 "                               while the ROM's tape code runs (type CLOAD / CRUN)\n"
 "  --tape-mount-frame N         mount at frame N (default 5)\n"
+"  --disk1 FILE[@FRAME] / --disk2 FILE[@FRAME]   mount a .dsk in drive 1/2 (S1/S2; default\n"
+"                               frames 3/4); implies --dos-rom. The core reads and writes it\n"
+"                               through the SD block interface (in memory)\n"
+"  --disk1-ro / --disk2-ro      mount read-only (write protect)\n"
+"  --disk1-save FILE / --disk2-save FILE   write the image (with the core's writes) at exit\n"
 "  --sd-latency CLOCKS          clocks from sd_rd to the first byte (default 20000 = 0.47 ms)\n"
 "  --tape-rewind FRAME          press OSD Rewind tape at FRAME (repeatable)\n"
 "  OSD tape rows: --status-bit 12=1 Tape speed Normal, 13=1 Tape overlay Off, 14=1 Tape audio On\n"
@@ -503,6 +509,13 @@ static void parseArgs(int argc, char** argv) {
         else if (a == "--tape") O.tape_sd = absPath(need());
         else if (a == "--tape-direct") O.tape = absPath(need());
         else if (a == "--tape-mount-frame") O.tape_mount_frame = strtol(need().c_str(), nullptr, 0);
+        else if (a == "--disk1" || a == "--disk2") {
+            int n = a[6] - '1'; string v = need(); auto at = v.rfind('@');
+            if (at != string::npos && at > 0 && isdigit((unsigned char)v[at + 1])) { O.disk_frame[n] = atol(v.c_str() + at + 1); v = v.substr(0, at); }
+            O.disk[n] = absPath(v); O.status |= 1u << 6;
+        }
+        else if (a == "--disk1-ro" || a == "--disk2-ro") O.disk_ro[a[6] - '1'] = true;
+        else if (a == "--disk1-save" || a == "--disk2-save") O.disk_save[a[6] - '1'] = absPath(need());
         else if (a == "--sd-latency") O.sd_latency = strtol(need().c_str(), nullptr, 0);
         else if (a == "--tape-rewind") O.rewind_frames.push_back(strtol(need().c_str(), nullptr, 0));
         else if (a == "--expect-tape-hint") { long f; string r; splitFrame(need(), f, r); r = lower(r); O.expect_tape_hint.push_back({f, r == "crun" ? 1 : r == "run" ? 2 : 0}); }
@@ -606,9 +619,17 @@ int main(int argc, char** argv) {
         if (!O.quiet) printf("TAPE %s: %.1f s at %.0f Hz, plays from frame %ld at %.1fx\n", O.tape.c_str(), T.seconds(), T.rate, O.tape_frame, O.tape_speed);
     }
 
-    vector<uint8_t> sd_img; bool sd_mount_done = O.tape_sd.empty();
-    if (!O.tape_sd.empty()) { sd_img = readFile(O.tape_sd); if (!O.quiet) printf("TAPE %s (%zu bytes) mounts at frame %ld\n", O.tape_sd.c_str(), sd_img.size(), O.tape_mount_frame); }
-    int sd_state = 0; long sd_wait = 0; uint32_t sd_sector = 0; int sd_idx = 0; int mount_clk = 0; long rewind_clk = 0;
+    // SD images: 0 tape (S0), 1/2 disks (S1/S2)
+    struct SdImg { vector<uint8_t> d; bool mounted = true; long frame = 0; bool ro = false; string name; uint64_t writes = 0; };
+    SdImg img[3];
+    if (!O.tape_sd.empty()) { img[0].d = readFile(O.tape_sd); img[0].mounted = false; img[0].frame = O.tape_mount_frame; img[0].name = O.tape_sd;
+        if (!O.quiet) printf("TAPE %s (%zu bytes) mounts at frame %ld\n", O.tape_sd.c_str(), img[0].d.size(), O.tape_mount_frame); }
+    for (int n = 0; n < 2; n++) if (!O.disk[n].empty()) {
+        SdImg& I = img[n + 1]; I.d = readFile(O.disk[n]); I.mounted = false; I.frame = O.disk_frame[n]; I.ro = O.disk_ro[n]; I.name = O.disk[n];
+        if (!O.quiet) printf("DISK%d %s (%zu bytes) mounts at frame %ld%s\n", n + 1, O.disk[n].c_str(), I.d.size(), I.frame, I.ro ? " read-only" : "");
+    }
+    vector<uint8_t>& sd_img = img[0].d;
+    int sd_state = 0, sd_n = 0, sd_wr_op = 0; long sd_wait = 0; uint32_t sd_sector = 0; int sd_idx = 0; int mount_clk = 0; long rewind_clk = 0;
     bool old_play = false, old_end = false; uint64_t sd_reads = 0;
 
     WavOut tapeOut, audioOut;
@@ -673,15 +694,30 @@ int main(int argc, char** argv) {
         }
 
         // tape image slot (hps_io S0): mount, then serve 512-byte sectors after sd_latency clocks
-        if (!sd_mount_done && frame >= O.tape_mount_frame && reset_left == 0) {
-            top->img_size = sd_img.size(); top->img_mounted = 1; mount_clk = 2; sd_mount_done = true;
-        } else if (mount_clk > 0 && --mount_clk == 0) top->img_mounted = 0;
+        if (mount_clk > 0) { if (--mount_clk == 0) top->img_mounted = 0; }
+        else if (reset_left == 0) for (int n = 0; n < 3; n++) if (!img[n].mounted && frame >= img[n].frame) {
+            top->img_size = img[n].d.size(); top->img_readonly = img[n].ro; top->img_mounted = 1u << n; mount_clk = 2; img[n].mounted = true; break;
+        }
+        // hps_io: serve one 512-byte block read or write at a time, after sd_latency clocks
         switch (sd_state) {
-            case 0: if (top->sd_rd & 1) { sd_sector = top->sd_lba[0]; sd_wait = O.sd_latency; sd_state = 1; sd_reads++; } break;
-            case 1: if (--sd_wait <= 0) { top->sd_ack = 1; sd_idx = 0; sd_state = 2; } break;
+            case 0:
+                for (int n = 0; n < 3; n++) if (((top->sd_rd | top->sd_wr) >> n) & 1) {
+                    sd_n = n; sd_wr_op = (top->sd_wr >> n) & 1; sd_sector = top->sd_lba[n]; sd_wait = O.sd_latency; sd_state = 1; if (n == 0) sd_reads++; break;
+                }
+                break;
+            case 1: if (--sd_wait <= 0) { top->sd_ack = 1u << sd_n; sd_idx = 0; sd_state = sd_wr_op ? 3 : 2; top->sd_buff_addr = 0; sd_wait = 2; } break;
             case 2: {
+                vector<uint8_t>& D = img[sd_n].d;
                 if (top->sd_buff_wr) { top->sd_buff_wr = 0; if (++sd_idx == 512) { top->sd_ack = 0; sd_state = 0; } }
-                else { size_t o = (size_t)sd_sector * 512 + sd_idx; top->sd_buff_addr = sd_idx; top->sd_buff_dout = o < sd_img.size() ? sd_img[o] : 0; top->sd_buff_wr = 1; }
+                else { size_t o = (size_t)sd_sector * 512 + sd_idx; top->sd_buff_addr = sd_idx; top->sd_buff_dout = o < D.size() ? D[o] : 0; top->sd_buff_wr = 1; }
+                break; }
+            case 3: {   // write: the core presents sd_buff_din for sd_buff_addr (registered: wait 2 clocks)
+                if (--sd_wait > 0) break;
+                vector<uint8_t>& D = img[sd_n].d; size_t o = (size_t)sd_sector * 512 + sd_idx;
+                if (o < D.size()) D[o] = top->sd_buff_din[sd_n];
+                if (++sd_idx == 512) { top->sd_ack = 0; sd_state = 0; img[sd_n].writes++;
+                    if (!O.quiet) printf("DISK%d write block %u frame %ld\n", sd_n, sd_sector, frame); }
+                else { top->sd_buff_addr = sd_idx; sd_wait = 2; }
                 break; }
         }
         if (rewind_clk > 0 && --rewind_clk == 0) top->status = O.status;
@@ -730,7 +766,11 @@ int main(int argc, char** argv) {
                 if (O.io_log && A >= 0x6800 && A < 0x7000 && !SIG(vz_wr)) printf("LATCH f%ld %04X=%02X pc~%04X\n", frame, A, D, last_pc);
             } else if (!iorq && m1 && O.io_log) printf("OUT f%ld port %02X=%02X pc~%04X\n", frame, A & 0xff, D, last_pc);
         }
-        if (O.io_log && rd && !old_rd && !iorq && m1) printf("IN  f%ld port %02X -> %02X pc~%04X\n", frame, A & 0xff, (unsigned)SIG(CPU_D_INPORT), last_pc);
+        // IN: port at the start of the read strobe, value at its end (what the CPU latched)
+        static int in_port = -1; static uint8_t in_val = 0;
+        if (!rd && old_rd && !iorq && m1) in_port = A & 0xff;
+        if (in_port >= 0 && !rd) in_val = SIG(CPU_D_INPORT);
+        if (rd && !old_rd && in_port >= 0) { if (O.io_log) printf("IN  f%ld port %02X -> %02X pc~%04X\n", frame, in_port, in_val, last_pc); in_port = -1; }
         old_wr = wr; old_rd = rd; old_m1 = m1;
 
         // video
@@ -834,6 +874,11 @@ int main(int argc, char** argv) {
     if (O.shot_end && frame != O.stop_frame) { char fn[1024]; snprintf(fn, sizeof fn, "%s/%s_%05ld.png", O.shot_dir.c_str(), O.shot_prefix.c_str(), frame); V.png(fn); }
     if (O.text_end && frame != O.stop_frame) printf("TEXT frame %ld\n%s----\n", frame, screenText().c_str());
     tapeOut.close(); audioOut.close();
+    for (int n = 0; n < 2; n++) if (!O.disk[n].empty()) {
+        if (!O.quiet) printf("DISK%d %llu block writes, %u sectors written by the CPU, head at track %u, ready %u, sd state %u, latch %02X\n", n + 1, (unsigned long long)img[n + 1].writes,
+                             (unsigned)SIG(floppy__DOT__sectors_written), (unsigned)SIG(floppy__DOT__ptrk)[n], (unsigned)SIG(floppy__DOT__ready), (unsigned)SIG(floppy__DOT__s), (unsigned)SIG(floppy__DOT__latch));
+        if (!O.disk_save[n].empty()) { FILE* f = fopen(O.disk_save[n].c_str(), "wb"); if (f) { fwrite(img[n + 1].d.data(), 1, img[n + 1].d.size(), f); fclose(f); } }
+    }
 #ifdef HL_TRACE
     if (tfp) { tfp->close(); delete tfp; }
 #endif
