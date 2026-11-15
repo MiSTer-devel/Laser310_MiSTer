@@ -38,3 +38,14 @@ c5_pin_model_dump.txt
 *.cdf
 *.qarlog
 qar_info.json
+# local-only test software and reference material (never commit)
+software/
+refs/
+
+# Verilator build/test output
+verilator/obj_hl/
+verilator/regression_out/
+verilator/library_results/
+verilator/obj_dir/
+verilator/*.log
+__pycache__/

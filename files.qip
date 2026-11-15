@@ -20,6 +20,8 @@ set_global_assignment -name VHDL_FILE rtl/dpram.vhd
 set_global_assignment -name TEXT_FILE rtl/tv80/Text1.txt
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/LaserKeyboard.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/vz_loader.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/vz_overlay.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/vz_tape.sv
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/LaserCassEmu.sv
 set_global_assignment -name IP_TOOL_NAME "RAM: 1-PORT"
 set_global_assignment -name IP_TOOL_VERSION "13.0"

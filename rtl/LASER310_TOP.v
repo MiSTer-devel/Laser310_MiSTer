@@ -71,8 +71,9 @@ output         h_blank,
 output         v_blank,
 output         ce_pix,
 input				VIDEO_MODE,
+input				video_pal,		// 1: 312-line PAL field (50 Hz), 0: 262-line NTSC (60 Hz)
 output	[1:0]	AUD_ADCDAT,
-output	[7:0]	audio_s,
+output	[15:0]	audio_s,		// signed
 input				key_strobe,
 input				key_pressed,
 input		[7:0]	key_code,
@@ -97,7 +98,29 @@ input fire_2,
 input right_2,
 input left_2,
 input down_2,
-input up_2
+input up_2,
+// Cassette input level (comparator output). Hardware: tie 0 until the
+// tape player / ADC path exists; the Verilator harness drives it from --tape.
+input cass_in,
+input hint_en,			// OSD Load hints (vz_overlay.sv)
+// tape (vz_tape.sv): hps_io image slot S0 and its OSD rows
+input tape_overlay_en,		// OSD Tape overlay
+input tape_turbo_en,		// OSD Tape speed 3x
+input tape_audio_en,		// OSD Tape audio
+input tape_invert,			// OSD Tape polarity: Inverted
+input [1:0] tape_pitch,		// 0 Normal, 1 +6%, 2 +12%, 3 Auto (vz_tape.sv)
+input tape_deck_play,		// OSD Tape deck: Play (runs whenever a tape is mounted, for loaders that don't use the ROM)
+input tape_rewind,			// OSD Rewind tape (pulse)
+input img_mounted,
+input [63:0] img_size,
+output [31:0] sd_lba,
+output sd_rd,
+input sd_ack,
+input [8:0] sd_buff_addr,
+input [7:0] sd_buff_dout,
+input sd_buff_wr,
+output tape_ready,			// pulse: tape mounted/rewound and playable
+output tape_bad			// pulse: tape format not supported
 
 ); 
 
@@ -130,6 +153,7 @@ wire						CPU_RFSH;
 (*keep*)wire			CPU_WR_N;
 (*keep*)wire			CPU_IORQ_N;
 (*keep*)wire			CPU_INT_N;
+wire				VDG_FS_N;		// 6847 /FS: Z80 /INT and keyboard bit 7
 (*keep*)wire			CPU_M1_N;
 wire						CPU_BUSRQ_N;
 wire						CPU_BUSAK_N;
@@ -220,7 +244,9 @@ wire				EMU_KEY_EN;
 // cassette
 
 (*keep*)wire	[1:0]	CASS_OUT;
+wire			TAPE_LEVEL, TAPE_FAST;	// vz_tape (below)
 (*keep*)wire			CASS_IN;
+assign CASS_IN = cass_in | TAPE_LEVEL;	// cass_in: sim harness direct drive (tied 0 on MiSTer)
 (*keep*)wire			CASS_IN_L;
 (*keep*)wire			CASS_IN_R;
 
@@ -235,7 +261,7 @@ wire				EMU_KEY_EN;
 reg		[16:0]		RESET_KEY_COUNT;
 wire				RESET_KEY_N, RESET_N;
 
-wire				TURBO_SPEED		=	SWITCH[0];
+wire				TURBO_SPEED		=	SWITCH[0] | TAPE_FAST;	// OSD Turbo, or 3x while the tape plays
 
 
 RESET_DE RESET_DE(
@@ -392,7 +418,10 @@ assign CPU_HALT= ~CPU_HALT_N;
 assign CPU_BUSAK = ~CPU_BUSAK_N;
 assign CPU_RESET_N = ~CPU_RESET;
 //assign CPU_INT_N = VIDEO_MODE ? ~CPU_INT : ~VGA_VS;
-assign CPU_INT_N =  ~VGA_VS; 
+// Z80 /INT is wired to the 6847 FS pin (pin 37): low for the 32 lines of
+// vertical retrace, not just the 2-line sync pulse (VZ200 Hardware Interrupt
+// article; MAME fsync_wr_callback -> INT, inverted).
+assign CPU_INT_N = VDG_FS_N;
 wire VGA_VS2;
 assign CPU_BUSRQ_N = ~CPU_BUSRQ;
 
@@ -415,8 +444,9 @@ tv80s Z80CPU (
 	.int_n(CPU_INT_N),
 	.nmi_n(1'b1),
 	.busrq_n(CPU_BUSRQ_N),
-	.di(CPU_DI),
+	.di(CPU_IORQ_N ? CPU_DI : CPU_D_INPORT),	// same IN-port mux as the T80pa path
 	.dir(execute_addr),
+	.dirsp(16'hB7BB),		// same SP z80_regset gives T80pa
 	.dirset(execute_enable)
 
 );
@@ -829,31 +859,34 @@ end
 wire vs,hs;
 assign VGA_VS=~vs;
 assign VGA_HS=~hs;
+wire [7:0] VDG_RED, VDG_GREEN, VDG_BLUE;	// 6847 picture, before the hint overlay
 mc6847 mc6847(
   .clk(CLK42MHZ),
-  `ifdef VERILATOR
-  .clk_ena(1),
+  `ifdef SIM_FAST_VIDEO
+  .clk_ena(1),			// old sim shortcut: video 3x too fast vs CPU
   `else
   .clk_ena(clk_14M318_ena),
   `endif
   .reset(~RESET_N),
   .da0(),
+  .fs_n(VDG_FS_N),
   .videoaddr(VDG_ADDRESS),
   .dd(VDG_DATA),
   .an_g(LATCHED_AG),
-  .an_s(1'b0),
+  .an_s(VDG_DATA[7]),	// VRAM D7 = A/S per character: 80h-FFh are SG4 blocks, colour in bits 6:4 (MAME vram_r)
   .intn_ext(1'b0), // ?
   .gm(LATCHED_GM),
 //  .gm(3'b010 ),
   .css(LATCHED_CSS),
-  .inv(1'b0),
-  .red(VGA_RED),
-  .green(VGA_GREEN),
-  .blue(VGA_BLUE),
+  .inv(1'b0),			// VRAM D6 = INV on the VZ; the 4 KB char ROM already holds the inverse glyphs for 40h-7Fh
+  .red(VDG_RED),
+  .green(VDG_GREEN),
+  .blue(VDG_BLUE),
   .hsync(hs),
   .vsync(vs),
   .hblank(h_blank),
   .vblank(v_blank),
+  .pal(video_pal),
   .artifact_en(1'b1),
   .artifact_set(1'b0),
   .artifact_phase(1'b1),
@@ -862,6 +895,95 @@ mc6847 mc6847(
   .pixel_clk(ce_pix)
 );
 assign VDG_RD = CLK42MHZ;
+
+// ---------------------------------------------------------------------------
+// Cassette. The VZ has no motor relay: the deck plays while the CPU runs the
+// BASIC ROM's tape-read code, 35E1h (TAPE_FIND_PROGRAM) to 37F3h (end of
+// TAPE_READ_BIT), which CLOAD, CRUN, VERIFY and programs calling 3775h/378Fh
+// all use, and for 2^20 clocks (24 ms) after (the ROM leaves it briefly per
+// byte for the BREAK check and messages). OSD Tape deck: Play keeps it playing
+// whenever a tape is mounted, for programs with their own loaders (2018AD). While it plays with Tape speed 3x
+// the CPU runs 3x (TURBO_SPEED) and the tape too (tape standard rule 7).
+// ---------------------------------------------------------------------------
+wire        TAPE_ROM_PC = !CPU_M1_N && !CPU_MREQ_N && CPU_A >= 16'h35E1 && CPU_A <= 16'h37F3;
+reg  [19:0] TAPE_HOLD = 20'd0;
+always @(posedge CLK42MHZ)
+	if (TAPE_ROM_PC)            TAPE_HOLD <= 20'hFFFFF;
+	else if (TAPE_HOLD != 0)    TAPE_HOLD <= TAPE_HOLD - 20'd1;
+wire        TAPE_ROM  = TAPE_HOLD != 0;
+wire        TAPE_PLAY = TAPE_ROM | tape_deck_play;
+// 3x only while the ROM's tape code runs, never for a custom loader or a game (rule 6)
+// CLOAD of a BASIC program ends here (back to READY without RUN): hint "TYPE RUN"
+wire        TAPE_BASIC_CLOADED = !CPU_M1_N && !CPU_MREQ_N && CPU_A == 16'h36E0;
+
+wire        TAPE_LEVEL_RAW, TAPE_LOADED, TAPE_AT_START, TAPE_AT_END;
+wire [31:0] TAPE_POS, TAPE_LEN;
+wire [17:0] TAPE_HZ;
+wire [15:0] TAPE_UNDERFLOWS;
+assign      TAPE_LEVEL = TAPE_LEVEL_RAW;
+
+vz_tape vz_tape (
+  .clk(CLK42MHZ),
+  .img_mounted(img_mounted),
+  .img_size(img_size),
+  .sd_lba(sd_lba),
+  .sd_rd(sd_rd),
+  .sd_ack(sd_ack),
+  .sd_buff_addr(sd_buff_addr),
+  .sd_buff_dout(sd_buff_dout),
+  .sd_buff_wr(sd_buff_wr),
+  .rewind(tape_rewind),
+  .play(TAPE_PLAY),
+  .turbo_ok(tape_turbo_en & TAPE_ROM),
+  .invert(tape_invert),
+  .pitch(tape_pitch),
+  .level(TAPE_LEVEL_RAW),
+  .loaded(TAPE_LOADED),
+  .fast(TAPE_FAST),
+  .at_start(TAPE_AT_START),
+  .at_end(TAPE_AT_END),
+  .position(TAPE_POS),
+  .length(TAPE_LEN),
+  .hz(TAPE_HZ),
+  .ready_pulse(tape_ready),
+  .bad_pulse(tape_bad),
+  .underflows(TAPE_UNDERFLOWS)
+);
+
+// status bar and next-step hints over the picture
+wire       hint_show, bar_show;
+wire [1:0] tape_hint;
+vz_overlay vz_overlay (
+  .clk(CLK42MHZ),
+  .reset(~RESET_N),
+  .hint_en(hint_en),
+  .tape_en(tape_overlay_en),
+  .dn_download(dn_download),
+  .dn_index(dn_index),
+  .dn_addr(dn_addr),
+  .dn_data(dn_data),
+  .dn_wr(dn_wr),
+  .tape_loaded(TAPE_LOADED),
+  .tape_playing(TAPE_PLAY && !TAPE_AT_END),
+  .tape_fast(TAPE_FAST),
+  .tape_at_start(TAPE_AT_START),
+  .tape_pos(TAPE_POS),
+  .tape_len(TAPE_LEN),
+  .tape_hz(TAPE_HZ),
+  .tape_ready(tape_ready),
+  .basic_cloaded(TAPE_BASIC_CLOADED),
+  .key_strobe(key_strobe),
+  .key_pressed(key_pressed),
+  .key_code(key_code),
+  .ce_pix(ce_pix),
+  .hblank(h_blank),
+  .vblank(v_blank),
+  .r_in(VDG_RED), .g_in(VDG_GREEN), .b_in(VDG_BLUE),
+  .r_out(VGA_RED), .g_out(VGA_GREEN), .b_out(VGA_BLUE),
+  .show_vz(hint_show),
+  .show_bar(bar_show),
+  .show_tape(tape_hint)
+);
 /*
 //=====================================================================
 MC6847_VGA MC6847_VGA(
@@ -980,7 +1102,10 @@ wire KEY_DATA_BIT1 = (CPU_A[7:0]|{KEY[57], KEY[49], KEY[41], KEY[33], KEY[25], K
 wire KEY_DATA_BIT0 = (CPU_A[7:0]|{KEY[56], KEY[48], KEY[40], KEY[32], KEY[24], KEY[16], KEY[ 8], KEY[ 0]})==8'hff;
 */
 
-wire KEY_DATA_BIT7 = 1'b1;	// 没有空置，具体用途没有理解
+// Bit 7 = the 6847's /FS: 0 during the 32 lines of vertical blanking, 1 during
+// the picture (VZ200 TRM; MAME vtech1.cpp keyboard_r fs_r()). Games poll it to
+// wait for vblank (TENNIS, 3D-MAZE, BENNY ...).
+wire KEY_DATA_BIT7 = VDG_FS_N;
 //wire KEY_DATA_BIT6 = CASS_IN;
 wire KEY_DATA_BIT6 = ~CASS_IN;
 
@@ -1372,13 +1497,16 @@ cass_ram_2k_altera cass_buf(
 assign	CASS_OUT = EMU_CASS_EN ? EMU_CASS_DAT : {LATCHED_IO_DATA_WR[2], 1'b0};
 
 (*keep*)wire trap = (CPU_RD|CPU_WR) && (CPU_A[15:12] == 4'h0);
-//assign audio_s = 0;
-//assign audio_s = { aud,aud,aud,aud,1'b0,1'b0,1'b0,1'b0};
-assign audio_s = { LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[0],1'b0,1'b0,1'b0,1'b0};
-
-//assign audio_s = { LATCHED_IO_DATA_WR[5],LATCHED_IO_DATA_WR[0],1'b0,1'b0,1'b0,1'b0,1'b0,1'b0};
-//assign audio_s = { LATCHED_IO_DATA_WR[5]^LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[5]^LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[5]^LATCHED_IO_DATA_WR[0],1'b0,1'b0,1'b0,1'b0,1'b0,1'b0};
-wire aud = LATCHED_IO_DATA_WR[0]|LATCHED_IO_DATA_WR[5];
+// Sound, signed 16-bit. The piezo is driven push-pull by latch bits 0 and 5:
+// level = bit0 - bit5 (MAME vtech1 speaker_levels {0, +1, -1, 0}), so 1-bit
+// music engines that drive the two bits differently get three levels. With
+// Tape audio On the tape input and the cassette output (latch bit 2) are mixed
+// in quietly. sys/audio_out removes DC and low-passes.
+wire signed [15:0] SND_SPK  = (LATCHED_IO_DATA_WR[0] == LATCHED_IO_DATA_WR[5]) ? 16'sd0 :
+                              LATCHED_IO_DATA_WR[0] ? 16'sd12288 : -16'sd12288;
+wire signed [15:0] SND_TIN  = !tape_audio_en ? 16'sd0 : TAPE_LEVEL ? 16'sd3072 : -16'sd3072;
+wire signed [15:0] SND_TOUT = !tape_audio_en ? 16'sd0 : LATCHED_IO_DATA_WR[2] ? 16'sd3072 : -16'sd3072;
+assign audio_s = SND_SPK + SND_TIN + SND_TOUT;
 assign AUD_ADCDAT = {LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[5]};
 
 

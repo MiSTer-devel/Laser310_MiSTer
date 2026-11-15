@@ -105,7 +105,12 @@ module emu (
 	input [9:0] 		img_mounted,
 	input 			img_readonly,
 
-	input [63:0] 		img_size
+	input [63:0] 		img_size,
+
+	// sim-only: OSD status word (same bit meanings as CONF_STR in Laser310.sv)
+	input [31:0]		status,
+	// sim-only: cassette comparator level driven by the harness (--tape)
+	input			cass_in
 
 
 
@@ -126,9 +131,9 @@ wire [15:0] joys = joystick_a0;
 wire [15:0] joya = {joys[15:8], joys[7:0]};
 wire  [5:0] joyd = joystick_0[5:0] & {2'b11, {2{~|joys[7:0]}}, {2{~|joys[15:8]}}};
 
-assign AUDIO_L = {audio_l,6'b0};
-assign AUDIO_R = {audio_r,6'b0};
-wire [9:0] audio_l, audio_r;
+wire [15:0] audiomix;
+assign AUDIO_L = audiomix;
+assign AUDIO_R = audiomix;
 
 reg ce_pix;
 always @(posedge CLK_VIDEO) begin
@@ -140,6 +145,8 @@ end
 wire [15:0] hdd_sector;
 
 assign sd_lba[1] = {16'b0,hdd_sector};
+assign sd_rd[9:1] = 9'd0;
+assign sd_wr = 10'd0;
 
 wire led;
 wire hbl,vbl;
@@ -185,14 +192,14 @@ LASER310_TOP LASER310_TOP(
         .dn_addr(ioctl_addr[15:0]),
         .dn_wr(ioctl_wr),
         .dn_download(ioctl_download),
-        .led(LED),
-        .led2(LED2),
+        .led(),
+        .led2(),
 
 	//"O5,Turbo,Off,On;",
         //"O6,Dos Rom,Off,On;",
-        //"O7,SHRG,Off,On;",
-        //.SWITCH({"0000",status[10],~status[7],status[6],status[5]}),
-        .SWITCH({6'b0, 1'b0, 1'b1, 1'b0, 1'b1}),
+        //"O7,SHRG,On,Off;",
+        // Must match Laser310.sv exactly.
+        .SWITCH({6'b000000,status[10],~status[7],status[6],status[5]}),
         .UART_RXD(),
         .UART_TXD(),
         // joystick
@@ -207,7 +214,27 @@ LASER310_TOP LASER310_TOP(
         .right_2(joystick_1[0]),
         .left_2(joystick_1[1]),
         .down_2(joystick_1[2]),
-        .up_2(joystick_1[3])
+        .up_2(joystick_1[3]),
+        .cass_in(cass_in),
+        .hint_en(~status[11]),   // OB Load hints, On by default (as Laser310.sv)
+        .tape_overlay_en(~status[13]),
+        .tape_turbo_en(~status[12]),
+        .tape_audio_en(status[14]),
+        .video_pal(~status[20]),
+        .tape_deck_play(status[16]),
+        .tape_invert(status[17]),
+        .tape_pitch((status[19:18] == 2'd0 ? 2'd3 : status[19:18] - 2'd1)),   // as Laser310.sv
+        .tape_rewind(status[15]),
+        .img_mounted(img_mounted[0]),
+        .img_size(img_size),
+        .sd_lba(sd_lba[0]),
+        .sd_rd(sd_rd[0]),
+        .sd_ack(sd_ack[0]),
+        .sd_buff_addr(sd_buff_addr),
+        .sd_buff_dout(sd_buff_dout),
+        .sd_buff_wr(sd_buff_wr),
+        .tape_ready(),
+        .tape_bad()
 
         );
 

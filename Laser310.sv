@@ -180,7 +180,7 @@ assign SDRAM_DQ = 'Z;
 
 assign BUTTONS = 0;
 
-assign AUDIO_S = 0;
+assign AUDIO_S = 1;
 assign AUDIO_MIX = 0;
 
 assign LED_DISK  = LED;						/* later add disk motor on/off */
@@ -201,17 +201,28 @@ localparam CONF_STR = {
         "Laser;;",
         "-;",
         "F1,VZ ,Load VZ Image;",
+        "S0,WAVCAS,Tape;",
         "-;",
+        "OK,Video standard,PAL (50 Hz),NTSC (60 Hz);",
         "O89,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	     "O24,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
 
         "O5,Turbo,Off,On;",
         "O6,Dos Rom,Off,On;",
-        "O7,SHRG,Off,On;",
+        "O7,SHRG,On,Off;",
+        "OB,Load hints,On,Off;",
+        "OC,Tape speed,3x,Normal;",
+        "OD,Tape overlay,On,Off;",
+        "OE,Tape audio,Off,On;",
+        "OG,Tape deck,Auto,Play;",
+        "OH,Tape polarity,Normal,Inverted;",
+        "OIJ,Tape pitch,Auto,Normal,+6%,+12%;",
      //   "O8,64x32 Video,Off,On;",
 
         "-;",
+        "RF,Rewind tape;",
         "R0,Reset;",
+        "I,Tape ready (rewound),Tape format not supported;",
 		  "J,Fire 1,Button 2;",
         "V,v",`BUILD_DATE
 };
@@ -235,6 +246,17 @@ wire [21:0] gamma_bus;
 wire [15:0] joystick_0, joystick_1;
 
 
+// tape image slot and the OSD info message on mount ("I," in CONF_STR)
+wire        img_mounted, img_readonly;
+wire [63:0] img_size;
+wire [31:0] sd_lba;
+wire        sd_rd, sd_ack, sd_buff_wr;
+wire [13:0] sd_buff_addr;
+wire  [7:0] sd_buff_dout;
+wire        tape_ready, tape_bad;
+reg         info_req;
+reg   [7:0] info;
+
 hps_io #(.CONF_STR(CONF_STR), .PS2DIV(32)/*, .WIDE(0)*/) hps_io
 (
         .clk_sys(clk_sys),
@@ -256,6 +278,22 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(32)/*, .WIDE(0)*/) hps_io
         .ioctl_index(ioctl_index),
         .ps2_key(ps2_key),
 
+        // tape image (S0)
+        .img_mounted(img_mounted),
+        .img_size(img_size),
+        .sd_lba('{sd_lba}),
+        .sd_blk_cnt('{6'd0}),
+        .sd_rd(sd_rd),
+        .sd_wr(1'b0),
+        .sd_ack(sd_ack),
+        .sd_buff_addr(sd_buff_addr),
+        .sd_buff_dout(sd_buff_dout),
+        .sd_buff_din('{8'd0}),
+        .sd_buff_wr(sd_buff_wr),
+
+        .info_req(info_req),
+        .info(info),
+
         .ps2_kbd_clk_out    ( ps2_kbd_clk    ),
         .ps2_kbd_data_out   ( ps2_kbd_data   )
 );
@@ -268,6 +306,12 @@ wire ps2_kbd_clk;
 wire ps2_kbd_data;
 
 assign clk_sys  = clk_42; 
+
+always @(posedge clk_sys) begin
+        info_req <= 0;
+        if (tape_ready) begin info <= 8'd1; info_req <= 1; end
+        if (tape_bad)   begin info <= 8'd2; info_req <= 1; end
+end
 wire       key_pressed = ps2_key[9];
 wire [8:0] key_code    = ps2_key[8:0];
 reg key_strobe;
@@ -306,7 +350,8 @@ LASER310_TOP LASER310_TOP(
         .dn_download(ioctl_download),
         .led(LED),
         .led2(LED2),
-        .SWITCH({"0000",status[10],~status[7],status[6],status[5]}),
+        // SWITCH[2] = SHRG enable = ~status[7]: OSD "SHRG: On" (the default, status 0) enables it.
+        .SWITCH({6'b000000,status[10],~status[7],status[6],status[5]}),
         .UART_RXD(),
         .UART_TXD(),
 	// joystick
@@ -321,7 +366,27 @@ LASER310_TOP LASER310_TOP(
         .right_2(joystick_1[0]),
         .left_2(joystick_1[1]),
         .down_2(joystick_1[2]),
-        .up_2(joystick_1[3])
+        .up_2(joystick_1[3]),
+        .cass_in(1'b0),          // sim-only direct drive; the tape player is inside (vz_tape.sv)
+        .hint_en(~status[11]),   // OB Load hints, On by default
+        .tape_overlay_en(~status[13]),
+        .tape_turbo_en(~status[12]),
+        .tape_audio_en(status[14]),
+        .video_pal(~status[20]),
+        .tape_deck_play(status[16]),
+        .tape_invert(status[17]),
+        .tape_pitch((status[19:18] == 2'd0 ? 2'd3 : status[19:18] - 2'd1)),   // OSD Auto (default) / Normal / +6% / +12%
+        .tape_rewind(status[15]),
+        .img_mounted(img_mounted),
+        .img_size(img_size),
+        .sd_lba(sd_lba),
+        .sd_rd(sd_rd),
+        .sd_ack(sd_ack),
+        .sd_buff_addr(sd_buff_addr[8:0]),
+        .sd_buff_dout(sd_buff_dout),
+        .sd_buff_wr(sd_buff_wr),
+        .tape_ready(tape_ready),
+        .tape_bad(tape_bad)
 
         );
 
@@ -362,9 +427,9 @@ video_mixer #(.LINE_LENGTH(800),.GAMMA(1)) video_mixer
 wire clk_sys,locked;
 wire hs,vs,hblank,vblank;
 
-wire [7:0]audiomix;
+wire [15:0] audiomix;		// signed
 
-assign AUDIO_L={audiomix,8'b0000000};
+assign AUDIO_L=audiomix;
 assign AUDIO_R=AUDIO_L;
 
 
