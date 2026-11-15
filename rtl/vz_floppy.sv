@@ -93,13 +93,14 @@ endfunction
 reg  [17:0] a_addr;  reg [7:0] a_din;  reg a_we;  reg [7:0] a_q;
 reg  [17:0] b_addr;  reg [7:0] b_din;  reg b_we;  reg [7:0] b_q;
 reg   [7:0] mem[0:163839];
+// Quartus true dual-port template (new data on a same-port write)
 always @(posedge clk) begin
-	if (a_we) mem[a_addr] <= a_din;
-	a_q <= mem[a_addr];
+	if (a_we) begin mem[a_addr] <= a_din; a_q <= a_din; end
+	else a_q <= mem[a_addr];
 end
 always @(posedge clk) begin
-	if (b_we) mem[b_addr] <= b_din;
-	b_q <= mem[b_addr];
+	if (b_we) begin mem[b_addr] <= b_din; b_q <= b_din; end
+	else b_q <= mem[b_addr];
 end
 
 // ---------------------------------------------------------------------------
