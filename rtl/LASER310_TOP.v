@@ -3,6 +3,7 @@
 //`define	BENNVENN_DOS_ROM
 `define BASE_DOS_ROM
 `define BOOT_ROM_6000
+//`define HWDEBUG		// text rows 0-4 show the first opcode fetches after reset (hardware bring-up)
 `define BASE_RAM_78	//2k
 `define BASE_RAM_16K
 `define RAM_16K_EXPANSION
@@ -156,6 +157,9 @@ wire						CPU_BUSRQ;
 wire						CPU_BUSAK;
 wire						CPU_RFSH;
 (*keep*)wire			CPU_RESET_N;
+wire				CPU_CEN_P, CPU_CEN_N;	// T80pa clock enables (FPGA build)
+// IN-port data only in an I/O read (IORQ without M1), not an interrupt acknowledge
+wire	[7:0]	CPU_DI_MUX;
 (*keep*)wire			CPU_HALT_N;
 (*keep*)wire			CPU_MREQ_N;
 (*keep*)wire			CPU_RD_N;
@@ -453,7 +457,7 @@ tv80s Z80CPU (
 	.int_n(CPU_INT_N),
 	.nmi_n(1'b1),
 	.busrq_n(CPU_BUSRQ_N),
-	.di(CPU_IORQ_N ? CPU_DI : CPU_D_INPORT),	// same IN-port mux as the T80pa path
+	.di(CPU_DI_MUX),	// same IN-port mux as the T80pa path
 	.dir(execute_addr),
 	.dirsp(16'hB7BB),		// same SP z80_regset gives T80pa
 	.dirset(execute_enable)
@@ -472,13 +476,17 @@ t80pa Z80CPU (
 	.A(ACPU_A),
 	.do(ACPU_DO),
 	.reset_n(CPU_RESET_N),
-//	.clk(CPU_CLK),
-	.clk(GCLK),
+	// On the PLL clock with enables, not the GCLK ripple clock (unconstrained in
+	// Quartus). CEN_p fires where GCLK used to rise, CEN_n half a T-state later:
+	// one T-state per 12 clocks (4 in turbo), the same rate as tv80s in the sim.
+	.clk(CLK42MHZ),
+	.cen_p(CPU_CEN_P),
+	.cen_n(CPU_CEN_N),
 	.wait_n(1'b1),
 	.int_n(CPU_INT_N),
 	.nmi_n(1'b1),
 	.busrq_n(CPU_BUSRQ_N),
-	.di(CPU_IORQ_N ? CPU_DI : CPU_D_INPORT),
+	.di(CPU_DI_MUX),
 
 	.DIR(DIR),
 	.DIRSet(DIRSet)
@@ -516,6 +524,9 @@ wire GCLK =  CPU_CLK ;
 assign CPU_A = vz_wr ? vz_addr : ACPU_A;
 assign CPU_DO = vz_wr ? vz_data : ACPU_DO;
 wire GCLK = vz_wr ? 1'b0  : CPU_CLK ;
+assign CPU_DI_MUX = (~CPU_IORQ_N & CPU_M1_N) ? CPU_D_INPORT : CPU_DI;
+assign CPU_CEN_P = (CLK == 4'd0) & ~vz_wr;
+assign CPU_CEN_N = (CLK == (TURBO_SPEED ? 4'd2 : 4'd6)) & ~vz_wr;
 assign CPU_WR_N = vz_wr ? 1'b0 : ACPU_WR_N;
 assign MEM_OP_WR = vz_wr ? 1'b1 : AMEM_OP_WR;
 assign CPU_IORQ_N = vz_wr ? 1'b1: ACPU_IORQ_N;
@@ -805,8 +816,51 @@ vram_8k(
 	.data_a_o(VRAM_DATA_OUT),
 	.clk_b_i(VDG_RD),
 	.addr_b_i(VDG_ADDRESS[12:0]),
+`ifdef HWDEBUG
+	.data_b_o(VDG_DATA_RAM)
+`else
 	.data_b_o(VDG_DATA)
+`endif
 	);
+`endif
+
+`ifdef HWDEBUG
+// Hardware debug, keyboard: row 0 = KEY matrix (16 hex), row 1 = key_code,
+// pressed, EMU_KEY_EN, key_strobe, LATCHED_KEY_DATA, last 68xx read address,
+// its data, count of 68xx reads.
+wire [7:0] VDG_DATA_RAM;
+reg [15:0] dbg_ka, dbg_kn; reg [7:0] dbg_kd; reg dbg_ord;
+always @(posedge CLK42MHZ) begin
+	dbg_ord <= CPU_RD_N;
+	if (~CPU_MREQ_N & ~CPU_RD_N & dbg_ord & ADDRESS_IO) begin dbg_ka <= CPU_A; dbg_kn <= dbg_kn + 1'b1; end
+	if (~CPU_MREQ_N & ~CPU_RD_N & ADDRESS_IO) dbg_kd <= CPU_DI;
+end
+function [7:0] hx(input [3:0] n); hx = (n < 10) ? 8'h30 + n : 8'h01 + n - 4'd10; endfunction
+reg [7:0] dbg_c; reg dbg_sel; reg [3:0] dbg_n;
+wire [3:0] dbg_i = VDG_ADDRESS[3:0];
+always @(posedge VDG_RD) begin
+	dbg_sel <= VDG_ADDRESS[12:4] == 9'd0 || VDG_ADDRESS[12:4] == 9'd2;
+	if (VDG_ADDRESS[5] == 1'b0) dbg_c <= hx(KEY[{~dbg_i, 2'b11} -: 4]);
+	else case (dbg_i)
+		4'd0: dbg_c <= hx(key_code[7:4]);
+		4'd1: dbg_c <= hx(key_code[3:0]);
+		4'd2: dbg_c <= hx({key_pressed, EMU_KEY_EN, key_strobe, 1'b0});
+		4'd3: dbg_c <= 8'h20;
+		4'd4: dbg_c <= hx(LATCHED_KEY_DATA[7:4]);
+		4'd5: dbg_c <= hx(LATCHED_KEY_DATA[3:0]);
+		4'd6: dbg_c <= 8'h20;
+		4'd7: dbg_c <= hx(dbg_ka[7:4]);
+		4'd8: dbg_c <= hx(dbg_ka[3:0]);
+		4'd9: dbg_c <= hx(dbg_kd[7:4]);
+		4'd10: dbg_c <= hx(dbg_kd[3:0]);
+		4'd11: dbg_c <= 8'h20;
+		4'd12: dbg_c <= hx(dbg_kn[15:12]);
+		4'd13: dbg_c <= hx(dbg_kn[11:8]);
+		4'd14: dbg_c <= hx(dbg_kn[7:4]);
+		4'd15: dbg_c <= hx(dbg_kn[3:0]);
+	endcase
+end
+assign VDG_DATA = dbg_sel ? dbg_c : VDG_DATA_RAM;
 `endif
 
 `ifdef VRAM_24K		// Super SHRG!
