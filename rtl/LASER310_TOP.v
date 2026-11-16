@@ -158,7 +158,7 @@ wire						CPU_BUSAK;
 wire						CPU_RFSH;
 (*keep*)wire			CPU_RESET_N;
 wire				CPU_CEN_P, CPU_CEN_N;	// T80pa clock enables (FPGA build)
-// IN-port data only in an I/O read (IORQ without M1), not an interrupt acknowledge
+wire				DIRSET_M1;
 wire	[7:0]	CPU_DI_MUX;
 (*keep*)wire			CPU_HALT_N;
 (*keep*)wire			CPU_MREQ_N;
@@ -489,9 +489,10 @@ t80pa Z80CPU (
 	.di(CPU_DI_MUX),
 
 	.DIR(DIR),
-	.DIRSet(DIRSet)
+	.DIRSet(DIRSET_M1)
 
 );
+
 `endif
 
 z80_regset #(16'hB7BB) regset (
@@ -505,6 +506,24 @@ wire [211:0] DIR;       // Z80 Register set as defined in T80pa / T80
 wire DIRSet;                // Signal to set registers
 wire [15:0] execute_addr;     // Start address for program start
 wire execute_enable;   	    // Jump to start address (out_execute_addr) - Not implemented
+
+`ifndef VERILATOR
+// .vz autostart on T80pa: DIRSet loads PC but leaves the instruction in
+// progress running, which can overwrite PC again (RET, CALL, JP in BASIC's
+// idle loop). Hold the request until the next opcode fetch starts (M1 falls,
+// T1) and set PC there for one clock, between the clock enables, so the fetch
+// reads the start address.
+reg DIRSET_M1_R, dirset_pend, dirset_old, dirset_m1_old;
+always @(posedge CLK42MHZ) begin
+	dirset_old    <= DIRSet;
+	dirset_m1_old <= CPU_M1_N;
+	DIRSET_M1_R   <= 1'b0;
+	if (~CPU_RESET_N) dirset_pend <= 1'b0;
+	else if (DIRSet & ~dirset_old) dirset_pend <= 1'b1;
+	else if (dirset_pend & dirset_m1_old & ~CPU_M1_N) begin dirset_pend <= 1'b0; DIRSET_M1_R <= 1'b1; end
+end
+assign DIRSET_M1 = DIRSET_M1_R;
+`endif
 
 
 
@@ -524,7 +543,9 @@ wire GCLK =  CPU_CLK ;
 assign CPU_A = vz_wr ? vz_addr : ACPU_A;
 assign CPU_DO = vz_wr ? vz_data : ACPU_DO;
 wire GCLK = vz_wr ? 1'b0  : CPU_CLK ;
-assign CPU_DI_MUX = (~CPU_IORQ_N & CPU_M1_N) ? CPU_D_INPORT : CPU_DI;
+// I/O read: the IN port. Interrupt acknowledge (IORQ with M1): FFh, the VZ's
+// floating bus, so IM 0 runs RST 38h like IM 1.
+assign CPU_DI_MUX = CPU_IORQ_N ? CPU_DI : (CPU_M1_N ? CPU_D_INPORT : 8'hFF);
 assign CPU_CEN_P = (CLK == 4'd0) & ~vz_wr;
 assign CPU_CEN_N = (CLK == (TURBO_SPEED ? 4'd2 : 4'd6)) & ~vz_wr;
 assign CPU_WR_N = vz_wr ? 1'b0 : ACPU_WR_N;
