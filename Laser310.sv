@@ -43,43 +43,74 @@ wire [1:0] ar = status[9:8];
 // VIDEO_ARX/ARY come from video_freak (below the video_mixer).
 
 `include "build_id.v"
+// OSD layout: ~/dev2/osd-standard.md (top page = media, then the pages
+// P1 Machine, P2 Video, P3 Input, P4 Audio, P5 Advanced, then Apply and reset).
+// Machine settings (CPU speed, Disk drives, SHRG, Video standard) are latched
+// into cfg at reset; the rest act at once (video, overlays, input, tape: tape
+// standard rules 1-2). v,1: the defaults changed (Disk drives On), so .CFG
+// files from older builds are dropped.
+//
+// status bits: 0 Apply and reset; 4:2 Scandoubler Fx; 5 CPU speed; 6 Disk
+// drives (0 = On); 7 SHRG (0 = On); 9:8 Aspect ratio; 11 Load hints (0 = On);
+// 12 Tape speed; 13 Tape overlay (0 = On); 14 Tape audio; 15 Rewind tape;
+// 16 Tape deck; 17 Tape polarity; 19:18 Tape pitch; 20 Video standard;
+// 22:21 Scale; 23 Keyboard layout. (10 = SWITCH[3] 64x32 text, not offered.)
 localparam CONF_STR = {
         "Laser;;",
         "-;",
-        "F1,VZ ,Load VZ Image;",
+        "H1S1,DSK,Disk 1;",
+        "h1-;",
+        "H1S2,DSK,Disk 2;",
+        "h1-;",
         "S0,WAVCAS,Tape;",
-        "S1,DSK,Disk 1;",
-        "S2,DSK,Disk 2;",
+        "F1,VZ,Load VZ;",
+        "F0,ROM,Load ROM;",
         "-;",
-        "OK,Video standard,PAL (50 Hz),NTSC (60 Hz);",
-        "O89,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
-        "O[22:21],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
-        "O24,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
-
-        "O5,Turbo,Off,On;",
-        "O6,Disk drives (DOS),Off,On;",
-        "O7,SHRG,On,Off;",
-        "OB,Load hints,On,Off;",
-        "OC,Tape speed,3x,Normal;",
-        "OD,Tape overlay,On,Off;",
-        "OE,Tape audio,Off,On;",
-        "OG,Tape deck,Auto,Play;",
-        "OH,Tape polarity,Normal,Inverted;",
-        "OIJ,Tape pitch,Auto,Normal,+6%,+12%;",
-     //   "O8,64x32 Video,Off,On;",
-
+        "P1,Machine;",
+        "P2,Video;",
+        "P3,Input;",
+        "P4,Audio;",
+        "P5,Advanced;",
         "-;",
-        "RF,Rewind tape;",
-        "R0,Reset;",
+        "h0-,Changes pending;",
+        "R[0],Apply and reset;",
+
+        "P1O[6],Disk drives (DOS),On,Off;",
+        "P1O[5],CPU speed,Normal,3x;",
+        "P1O[7],SHRG,On,Off;",
+        "P1O[12],Tape speed,3x,Normal;",
+        "P1-;",
+        "P1R[15],Rewind tape;",
+
+        "P2O[20],Video standard,PAL (50 Hz),NTSC (60 Hz);",
+        "P2-;",
+        "P2O[9:8],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
+        "P2O[22:21],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
+        "P2O[4:2],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
+        "P2-;",
+        "P2O[13],Tape overlay,On,Off;",
+        "P2O[11],Load hints,On,Off;",
+
+        "P3O[23],Keyboard layout,VZ,PC;",
+
+        "P4O[14],Tape audio,Off,On;",
+
+        "P5O[16],Tape deck,Auto,Play;",
+        "P5O[17],Tape polarity,Normal,Inverted;",
+        "P5O[19:18],Tape pitch,Auto,Normal,+6%,+12%;",
+
         "I,Tape ready (rewound),Tape format not supported;",
-		  "J,Fire 1,Button 2;",
+        "J,Fire,Arm;",
+        "v,1;",
         "V,v",`BUILD_DATE
 };
+
 
 wire LED;
 wire LED2;
 
 wire [127:0] status;
+wire        pending, dos_off;   // OSD menumask: Changes pending, disk rows hidden
 wire  [1:0] buttons;
 wire        ioctl_download;
 wire        ioctl_wr;
@@ -148,6 +179,8 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(32), .VDNUM(3)) hps_io
         .sd_buff_din('{8'd0, disk_sd_buff_din, disk_sd_buff_din}),
         .sd_buff_wr(sd_buff_wr),
 
+        .status_menumask({14'd0, dos_off, pending}),   // bit 0: Changes pending, bit 1: hide the disk rows
+
         .info_req(info_req),
         .info(info),
 
@@ -158,6 +191,13 @@ hps_io #(.CONF_STR(CONF_STR), .PS2DIV(32), .VDNUM(3)) hps_io
 wire reset;
 wire rom_download = ioctl_download && !ioctl_index;
 assign reset = (RESET | status[0] | buttons[1] | rom_download  );
+
+// The machine settings it runs with: taken from the OSD at every reset (Apply
+// and reset, the board's reset, a core load, Load ROM).
+reg [127:0] cfg;
+always @(posedge clk_sys) if (reset) cfg <= status;
+assign pending = {status[7:5], status[20]} != {cfg[7:5], cfg[20]};
+assign dos_off = status[6];   // live: the disk rows hide as soon as Disk drives is Off
 
 wire ps2_kbd_clk;
 wire ps2_kbd_data;
@@ -199,6 +239,7 @@ LASER310_TOP LASER310_TOP(
         .key_strobe     (key_strobe     ),
         .key_pressed    (key_pressed    ),
         .key_code       (key_code       ),
+        .kbd_pc         (status[23]     ),
 
         .dn_index(ioctl_index),
         .dn_data(ioctl_data),
@@ -207,8 +248,8 @@ LASER310_TOP LASER310_TOP(
         .dn_download(ioctl_download),
         .led(LED),
         .led2(LED2),
-        // SWITCH[2] = SHRG enable = ~status[7]: OSD "SHRG: On" (the default, status 0) enables it.
-        .SWITCH({6'b000000,status[10],~status[7],status[6],status[5]}),
+        // SWITCH: [0] CPU 3x, [1] DOS ROM + drives, [2] SHRG (each On when its bit is 0 / 1 as listed above)
+        .SWITCH({6'b000000,1'b0,~cfg[7],~cfg[6],cfg[5]}),
         .UART_RXD(),
         .UART_TXD(),
 	// joystick
@@ -229,7 +270,7 @@ LASER310_TOP LASER310_TOP(
         .tape_overlay_en(~status[13]),
         .tape_turbo_en(~status[12]),
         .tape_audio_en(status[14]),
-        .video_pal(~status[20]),
+        .video_pal(~cfg[20]),
         .tape_deck_play(status[16]),
         .tape_invert(status[17]),
         .tape_pitch((status[19:18] == 2'd0 ? 2'd3 : status[19:18] - 2'd1)),   // OSD Auto (default) / Normal / +6% / +12%

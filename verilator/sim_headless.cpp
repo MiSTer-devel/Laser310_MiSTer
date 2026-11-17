@@ -70,7 +70,8 @@ struct LatchExpect{ long frame; uint8_t val, mask; };
 static struct Opts {
     long stop_frame = 300;
     bool quiet = false;
-    uint32_t status = 0;
+    uint32_t status = 1u << 6;     // Disk drives (DOS) Off in the sim unless --dos-rom / --disk (the core's default is On)
+    bool pc_keys = false;
     vector<long> reset_frames;
     long reset_clocks = 2000;
 
@@ -329,8 +330,21 @@ static std::map<string, uint16_t> keyNames() {
 // Parse --send-keys text into strokes. Escapes:
 //   \n RETURN  \b backspace  \e Esc (= Ctrl+-, BREAK)  \U \D \L \R arrows
 //   \^X Ctrl+X  \\ backslash  \p pause one key slot  \P pause 60 frames
+// US PC keyboard: symbol -> {shift, scan code} (for --pc-keys)
+static std::map<char, std::pair<bool, uint16_t>> keyPc() {
+    std::map<char, std::pair<bool, uint16_t>> m;
+    const char* P = "-=[]\\;',./`";      // unshifted
+    const char* S = "_+{}|:\"<>?~";      // shifted, same keys
+    const uint16_t C[] = {0x4E,0x55,0x54,0x5B,0x5D,0x4C,0x52,0x41,0x49,0x4A,0x0E};
+    for (int i = 0; i < 11; i++) { m[P[i]] = {false, C[i]}; m[S[i]] = {true, C[i]}; }
+    const char* D = ")!@#$%^&*(";
+    const uint16_t DC[] = {0x45,0x16,0x1E,0x26,0x25,0x2E,0x36,0x3D,0x3E,0x46};
+    for (int i = 0; i < 10; i++) m[D[i]] = {true, DC[i]};
+    return m;
+}
+
 static vector<KeyStroke> parseKeys(const string& t, vector<int>& pauses) {
-    auto plain = keyPlain(); auto sh = keyShifted();
+    auto plain = keyPlain(); auto sh = keyShifted(); auto pc = keyPc();
     vector<KeyStroke> out; pauses.clear();
     for (size_t i = 0; i < t.size(); i++) {
         char c = t[i]; KeyStroke k; int pause = 0;
@@ -347,13 +361,14 @@ static vector<KeyStroke> parseKeys(const string& t, vector<int>& pauses) {
                 case 'p': pause = 1; break;
                 case 'P': pause = 2; break;
                 case '^': if (i + 1 < t.size()) { char x = toupper(t[++i]); if (plain.count(x)) k.codes = {K_CTRL, plain[x]}; } break;
-                case '\\': k.codes = {K_SHIFT, plain['M']}; break;
+                case '\\': k.codes = O.pc_keys ? vector<uint16_t>{0x5D} : vector<uint16_t>{K_SHIFT, plain['M']}; break;
                 default: fprintf(stderr, "warning: unknown key escape \\%c\n", e);
             }
         } else if (c == '\n') k.codes = {K_RET};
         else {
             char u = toupper(c);
-            if (plain.count(u)) k.codes = {plain[u]};
+            if (O.pc_keys && pc.count(c)) { auto e = pc[c]; k.codes = e.first ? vector<uint16_t>{K_SHIFT, e.second} : vector<uint16_t>{e.second}; }
+            else if (plain.count(u)) k.codes = {plain[u]};
             else if (sh.count(c)) k.codes = {K_SHIFT, plain[sh[c]]};
             else fprintf(stderr, "warning: no VZ key for '%c'\n", c);
         }
@@ -412,7 +427,8 @@ static void usage() {
 "  --status HEX                 raw status word\n"
 "  --status-bit N=V             set one status bit\n"
 "  --turbo                      O5 Turbo On (CPU 3x)\n"
-"  --dos-rom                    O6 Disk drives (DOS) On: VZ DOS at 4000h + controller\n"
+"  --dos-rom                    Disk drives (DOS) On: VZ DOS at 4000h + controller (bit 6 = 0;\n"
+"                               the sim starts with it Off, bit 6 = 1; the core's default is On)\n"
 "  --shrg on|off                O7 SHRG (default On)\n"
 "  --sysrom FILE / --dosrom FILE  replace BASIC / DOS ROM contents (sim only)\n"
 "Media\n"
@@ -445,6 +461,8 @@ static void usage() {
 "                               \\U \\D \\L \\R arrows, \\^X Ctrl+X, \\\\ backslash,\n"
 "                               \\p pause one key slot, \\P pause 60 frames.\n"
 "                               Shifted symbols use the VZ layout (\" = Shift+2 ...)\n"
+"  --pc-keys                    OSD Keyboard layout PC (status bit 23): --send-keys types\n"
+"                               symbols the way a US PC keyboard has them (\" = Shift+')\n"
 "  --key-hold N / --key-gap N   frames per key press / between keys (default 3 / 3)\n"
 "  --hold-key FRAME:NAME:N      hold a key N frames (A-Z 0-9 SPACE RETURN SHIFT CTRL\n"
 "                               UP DOWN LEFT RIGHT BREAK BS F12 ...)\n"
@@ -500,7 +518,8 @@ static void parseArgs(int argc, char** argv) {
         else if (a == "--status") O.status = strtoul(need().c_str(), nullptr, 16);
         else if (a == "--status-bit") { string s = need(); auto p = s.find('='); int b = atoi(s.substr(0, p).c_str()); int v = p == string::npos ? 1 : atoi(s.substr(p + 1).c_str()); if (v) O.status |= 1u << b; else O.status &= ~(1u << b); }
         else if (a == "--turbo") O.status |= 1u << 5;
-        else if (a == "--dos-rom") O.status |= 1u << 6;
+        else if (a == "--dos-rom") O.status &= ~(1u << 6);
+        else if (a == "--pc-keys") { O.pc_keys = true; O.status |= 1u << 23; }
         else if (a == "--shrg") { string v = lower(need()); if (v == "on" || v == "1") O.status &= ~(1u << 7); else O.status |= 1u << 7; }
         else if (a == "--sysrom") O.sysrom = absPath(need());
         else if (a == "--dosrom") O.dosrom = absPath(need());
@@ -512,7 +531,7 @@ static void parseArgs(int argc, char** argv) {
         else if (a == "--disk1" || a == "--disk2") {
             int n = a[6] - '1'; string v = need(); auto at = v.rfind('@');
             if (at != string::npos && at > 0 && isdigit((unsigned char)v[at + 1])) { O.disk_frame[n] = atol(v.c_str() + at + 1); v = v.substr(0, at); }
-            O.disk[n] = absPath(v); O.status |= 1u << 6;
+            O.disk[n] = absPath(v); O.status &= ~(1u << 6);
         }
         else if (a == "--disk1-ro" || a == "--disk2-ro") O.disk_ro[a[6] - '1'] = true;
         else if (a == "--disk1-save" || a == "--disk2-save") O.disk_save[a[6] - '1'] = absPath(need());

@@ -27,6 +27,8 @@ FLAPPY=$SW/homebrew/gameblabla_flappybird_vz200
 
 run boot      --stop-at-frame 80 --expect-text 80:"VIDEO TECHNOLOGY" --expect-text 80:"BASIC V2.0" --expect-text 80:READY
 run print     --stop-at-frame 220 --send-keys '70:PRINT 2+3*7,"HI";\n' --expect-text 220:' 23' --expect-text 220:HI
+# Keyboard layout PC (status bit 23): PC Shift+' types ", Shift+; types :, Shift+9 types ), = is unshifted
+run pc-keys   --pc-keys --stop-at-frame 300 --send-keys '70:PRINT "A=";2+3,(4*5):PRINT 7/2\n' --expect-text 300:'A= 5             20' --expect-text 300:' 3.5'
 # GitHub issue #1: RAM at 7800h-7FFFh must read back
 run issue1    --stop-at-frame 300 --send-keys '70:POKE 32767,55:PRINT PEEK(32767)\n' --expect-text 300:' 55'
 # Frame timing: 228 CPU cycles per line; PAL (default) 312 lines, NTSC (status bit 20) 262

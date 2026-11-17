@@ -3,6 +3,28 @@ This is a MiSTer port of the core by:
 https://github.com/zzemu-cn/LASER310_FPGA_DD20
 
 
+# OSD
+
+The menu follows the MiSTer computer-core layout: the media on the top page, the settings on pages.
+
+- **Top page:** Disk 1, Disk 2 (shown while Disk drives is On), Tape, Load VZ, Load ROM; then Machine, Video, Input, Audio and Advanced; then **Apply and reset**.
+- **Machine:** Disk drives (DOS) (On by default), CPU speed (Normal, 3x), SHRG, Tape speed, Rewind tape.
+- **Video:** Video standard (PAL, NTSC), Aspect ratio, Scale, Scandoubler Fx, Tape overlay, Load hints.
+- **Input:** Keyboard layout (VZ, PC).
+- **Audio:** Tape audio.
+- **Advanced:** Tape deck, Tape polarity, Tape pitch.
+
+Disk drives, CPU speed, SHRG and Video standard change the machine, so they wait for **Apply and reset** (the top page shows "Changes pending" until then). Everything else acts at once. Settings saved by builds before 2026-11 are dropped once (config version 1), so the core starts from the defaults.
+
+- **Load ROM** replaces the 16 KB BASIC ROM for this session (a `games/Laser/boot0.rom` is loaded at every core start instead, if present). The machine resets with it.
+- **Aspect ratio Original** is the VZ's real picture shape, 8:7: the 6847 sends 256 x 192 pixels at 7.16 MHz, narrower than square pixels. **Scale** V-Integer gives 5x (960 lines) at 1080p. On HDMI leave Scandoubler Fx at None for the biggest integer picture: with it on the scaler sees 384 lines.
+
+# Keyboard
+
+- **VZ** (default): keys act by position, as on the VZ keyboard: `"` is Shift+2, `(` `)` are Shift+8 and Shift+9, `=` is Shift+-, `:` is the key right of `;` (PC `'`), `+` and `*` are Shift+; and Shift+:.
+- **PC:** symbol keys type what is printed on a US PC keyboard (Shift+' gives `"`, Shift+; gives `:`, `=` is unshifted, `/` `?` `[` `]` `\` `^` `@` `&` `*` `(` `)` where the PC has them). `_ { } |` have no VZ key and do nothing. Letters and digits are the same in both layouts. With Ctrl held the keys stay positional, so the VZ's Ctrl functions (RUBOUT Ctrl+;, INVERSE Ctrl+:, BREAK Ctrl+-) work as printed on the VZ.
+- Both: the arrow keys, Backspace and Esc (BREAK) are mapped to the VZ's Ctrl combinations.
+
 # VZ Loader
 
 Load VZ snapshots - there are two types, basic images and binary images. The basic images will load, and you need to type RUN&lt;enter&gt; to start. Binary ones should start automatically.
@@ -25,11 +47,11 @@ Mount a `.wav` or `.cas` in the OSD **Tape** slot, then type `CLOAD` (BASIC) or 
 
 # Floppy disks
 
-Set **Disk drives (DOS)** On (then reset) to fit the DD20 / DI-40 disk interface: VZ DOS 1.2 at 4000h and two drives. Mount `.dsk` images in **Disk 1** and **Disk 2**. At the `DOS BASIC V1.2` prompt use the DOS commands: `DIR`, `RUN"NAME"` (BASIC, `T:` files), `BRUN"NAME"` (machine code, `B:` files), `LOAD`, `SAVE"NAME"`, `ERA`, `REN`, `INIT` (format), `DRIVE 1`/`DRIVE 2`, `STATUS`.
+**Disk drives (DOS)** On (the default) fits the DD20 / DI-40 disk interface: VZ DOS 1.2 at 4000h and two drives. VZ DOS takes the top 311 bytes of RAM (BASIC's top of memory is FEC8h instead of FFFFh); set it Off and Apply and reset for a machine without the disk interface. Mount `.dsk` images in **Disk 1** and **Disk 2**. At the `DOS BASIC V1.2` prompt use the DOS commands: `DIR`, `RUN"NAME"` (BASIC, `T:` files), `BRUN"NAME"` (machine code, `B:` files), `LOAD`, `SAVE"NAME"`, `ERA`, `REN`, `INIT` (format), `DRIVE 1`/`DRIVE 2`, `STATUS`.
 
 - **Images:** every `.dsk` variant in circulation works (98,560, 99,184, 99,185 bytes and the odd sizes in between): the image is read at mount like MAME does, by finding each sector's header and data marks, so extra or missing gap bytes don't matter.
 - **Writing:** `SAVE`, `ERA`, `INIT` etc. write to the image file on the SD card. Each written sector (128 bytes and its checksum) goes back in place, so the file keeps its own layout and size and stays readable by other emulators. A disk mounted read-only is write protected (`?DISK WRITE PROTECTED`).
-- **Timing:** the controller is modelled at the flux level, like the real board and MAME: the drive delivers a bit every 115 CPU cycles and the DOS reads it by polling, so other disk software (copy programs, custom loaders) sees the same signals. With Turbo the disk speeds up with the CPU.
+- **Timing:** the controller is modelled at the flux level, like the real board and MAME: the drive delivers a bit every 115 CPU cycles and the DOS reads it by polling, so other disk software (copy programs, custom loaders) sees the same signals. With CPU speed 3x the disk speeds up with the CPU.
 - VZ DOS 1.2 has two wait loops that only worked on the real machine by luck of timing; the core patches them the same way MAME does (two bytes, at 5678h and 5688h).
 
 # Video and sound

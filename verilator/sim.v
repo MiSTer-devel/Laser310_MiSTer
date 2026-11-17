@@ -192,6 +192,7 @@ LASER310_TOP LASER310_TOP(
         .key_strobe     (key_strobe     ),
         .key_pressed    (key_pressed    ),
         .key_code       (key_code[7:0]       ),
+        .kbd_pc(status[23]),         // P3 Keyboard layout PC
 
         .dn_index(ioctl_index),
         .dn_data(ioctl_dout),
@@ -201,11 +202,10 @@ LASER310_TOP LASER310_TOP(
         .led(),
         .led2(),
 
-	//"O5,Turbo,Off,On;",
-        //"O6,Dos Rom,Off,On;",
-        //"O7,SHRG,On,Off;",
-        // Must match Laser310.sv exactly.
-        .SWITCH({6'b000000,status[10],~status[7],status[6],status[5]}),
+        // Same bit meanings as Laser310.sv (v,1): 5 CPU 3x, 6 Disk drives (0 = On),
+        // 7 SHRG (0 = On). The sim reads status live (no cfg latch; settings are
+        // fixed for a run). The harness starts with bit 6 = 1 (DOS Off).
+        .SWITCH({6'b000000,1'b0,~status[7],~status[6],status[5]}),
         .UART_RXD(),
         .UART_TXD(),
         // joystick

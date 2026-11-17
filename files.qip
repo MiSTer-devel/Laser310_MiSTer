@@ -14,6 +14,7 @@ set_global_assignment -name VERILOG_FILE rtl/vz_floppy.sv
 set_global_assignment -name VERILOG_FILE rtl/6847/mc6847.v
 set_global_assignment -name VERILOG_FILE rtl/6847/rom_char.v
 set_global_assignment -name VHDL_FILE rtl/sprom.vhd
+set_global_assignment -name VHDL_FILE rtl/sprom_wr.vhd
 set_global_assignment -name VHDL_FILE rtl/spram.vhd
 set_global_assignment -name VERILOG_FILE rtl/reset_de.v
 set_global_assignment -name VHDL_FILE rtl/dpram.vhd

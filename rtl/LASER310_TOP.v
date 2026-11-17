@@ -78,6 +78,7 @@ output	[15:0]	audio_s,		// signed
 input				key_strobe,
 input				key_pressed,
 input		[7:0]	key_code,
+input				kbd_pc,			// OSD Keyboard layout: 0 VZ (keys by position), 1 PC (symbols as printed)
 input		[9:0]	SWITCH,
 input				UART_RXD,
 output			UART_TXD,
@@ -563,10 +564,10 @@ vz_loader vz_loader(
 	
         .I_RST(~CPU_RESET_N),
 
-        .ioctl_wr(dn_wr),
+        .ioctl_wr(dn_wr && dn_index == 8'd1),            // .VZ only (index 0 is Load ROM)
         .ioctl_addr(dn_addr),
         .ioctl_data(dn_data),
-        .ioctl_download(dn_download),
+        .ioctl_download(dn_download && dn_index == 8'd1),
 		  
         .vz_addr(vz_addr),
         .vz_data(vz_data),
@@ -697,7 +698,9 @@ assign CPU_DI =
 		);
 	`else
 
-	sprom #(
+	// OSD Load ROM (ioctl index 0, games/Laser/boot0.rom at core start): replaces
+	// the 16 KB BASIC ROM. The machine is held in reset while it loads.
+	sprom_wr #(
 	`ifndef VERILATOR
 		.init_file("./roms/sysrom.mif"),
 	`else
@@ -708,7 +711,10 @@ assign CPU_DI =
 	sys_rom(
 		.address(CPU_A[13:0]),
 		.clock(CLK42MHZ),
-		.q(SYS_ROM_DATA)
+		.q(SYS_ROM_DATA),
+		.wr(dn_download && dn_wr && dn_index == 8'd0 && dn_addr[15:14] == 2'b00),
+		.wr_address(dn_addr[13:0]),
+		.wr_data(dn_data)
 		);
 
 	`endif
@@ -1171,8 +1177,66 @@ A7  J   ；  K   :   L   H  687FH      56
 // R-Shift
 
 
-wire	[63:0]	KEY_C		=	EMU_KEY_EN?EMU_KEY:KEY;
-wire	[9:0]	KEY_EX_C	=	EMU_KEY_EN?EMU_KEY_EX:KEY_EX;
+// PC keyboard layout (OSD Input: Keyboard layout = PC). A PC symbol key types the
+// symbol printed on it: the VZ key that carries that symbol is pressed and the VZ
+// SHIFT line is forced to what that symbol needs (PC Shift+; gives ':', which is
+// unshifted on the VZ). VZ symbols (MAME vtech1.cpp): ! " # $ % & ' ( ) @ on
+// Shift+1..0, = on Shift+-, + on Shift+;, * on Shift+:, / ? on Shift+K/L,
+// ^ \ on Shift+N/M, [ ] on Shift+O/P, ~ on Shift+SPACE. _ { } | have no VZ key.
+// One symbol at a time; the result is latched when the key goes down.
+// {used, no VZ key, VZ shift, VZ KEY index}
+function [8:0] pc_sym;
+	input [7:0] code;
+	input       sh;
+	case (code)
+	8'h1E: pc_sym = sh ? {3'b101, 6'd44} : {3'b100, 6'd25};	// 2 @     -> 2 / Shift+0
+	8'h36: pc_sym = sh ? {3'b101, 6'd32} : {3'b100, 6'd40};	// 6 ^     -> 6 / Shift+N
+	8'h3D: pc_sym = sh ? {3'b101, 6'd40} : {3'b100, 6'd45};	// 7 &     -> 7 / Shift+6
+	8'h3E: pc_sym = sh ? {3'b101, 6'd58} : {3'b100, 6'd43};	// 8 *     -> 8 / Shift+:
+	8'h46: pc_sym = sh ? {3'b101, 6'd43} : {3'b100, 6'd41};	// 9 (     -> 9 / Shift+8
+	8'h45: pc_sym = sh ? {3'b101, 6'd41} : {3'b100, 6'd44};	// 0 )     -> 0 / Shift+9
+	8'h4E: pc_sym = sh ? {3'b110, 6'd0 } : {3'b100, 6'd42};	// - _     -> - / none
+	8'h55: pc_sym = sh ? {3'b101, 6'd60} : {3'b101, 6'd42};	// = +     -> Shift+- / Shift+;
+	8'h54: pc_sym = sh ? {3'b110, 6'd0 } : {3'b101, 6'd49};	// [ {     -> Shift+O / none
+	8'h5B: pc_sym = sh ? {3'b110, 6'd0 } : {3'b101, 6'd52};	// ] }     -> Shift+P / none
+	8'h5D: pc_sym = sh ? {3'b110, 6'd0 } : {3'b101, 6'd37};	// \ |     -> Shift+M / none
+	8'h4C: pc_sym = sh ? {3'b100, 6'd58} : {3'b100, 6'd60};	// ; :     -> ; / :
+	8'h52: pc_sym = sh ? {3'b101, 6'd25} : {3'b101, 6'd45};	// ' "     -> Shift+7 / Shift+2
+	8'h4A: pc_sym = sh ? {3'b101, 6'd57} : {3'b101, 6'd59};	// / ?     -> Shift+K / Shift+L
+	8'h0E: pc_sym = sh ? {3'b101, 6'd36} : {3'b100, 6'd42};	// ` ~     -> - / Shift+SPACE
+	default: pc_sym = 9'd0;
+	endcase
+endfunction
+
+wire	[8:0]	PC_SYM		=	pc_sym(key_code, ~KEY[18] | ~KEY_EX[0]);
+// With Ctrl held the keys stay positional, so Ctrl+key functions (RUBOUT = Ctrl+;,
+// INVERSE = Ctrl+:, BREAK = Ctrl+-) are where the VZ keyboard has them.
+wire			PC_SYM_KEY	=	kbd_pc & PC_SYM[8] & KEY[10];	// handled here, not in the case below
+reg				SYM_ON, SYM_NONE, SYM_SHIFT;
+reg		[5:0]	SYM_KEY;
+reg		[7:0]	SYM_CODE;
+
+always @(posedge KB_CLK[3] or negedge RESET)
+begin
+	if(~RESET)
+		SYM_ON <= 1'b0;
+	else if(!kbd_pc || (!key_pressed && SYM_CODE == key_code))
+		SYM_ON <= 1'b0;						// released (also with Ctrl held by then)
+	else if(PC_SYM_KEY && key_pressed && !(SYM_ON && SYM_CODE == key_code))
+	begin
+		SYM_ON <= 1'b1;
+		SYM_CODE <= key_code;
+		{SYM_NONE, SYM_SHIFT, SYM_KEY} <= PC_SYM[7:0];
+	end
+end
+
+wire	[63:0]	SYM_MASK	=	(SYM_ON && !SYM_NONE) ? (64'd1 << SYM_KEY) : 64'd0;
+wire	[63:0]	KEY_S		=	KEY & ~SYM_MASK;
+wire	[63:0]	KEY_PC		=	SYM_ON ? {KEY_S[63:19], ~SYM_SHIFT, KEY_S[17:0]} : KEY;
+wire	[9:0]	KEY_EX_PC	=	SYM_ON ? {KEY_EX[9:1], 1'b1} : KEY_EX;
+
+wire	[63:0]	KEY_C		=	EMU_KEY_EN?EMU_KEY:KEY_PC;
+wire	[9:0]	KEY_EX_C	=	EMU_KEY_EN?EMU_KEY_EX:KEY_EX_PC;
 
 //wire KEY_CTRL_ULRD = (KEY_EX[7:4]==4'b1111);
 wire KEY_CTRL_ULRD_BRK = (KEY_EX[8:3]==6'b111111);
@@ -1250,7 +1314,7 @@ begin
 		if(RESET_KEY_COUNT[16]==1'b0)
 			RESET_KEY_COUNT <= RESET_KEY_COUNT+1;
 
-		case(key_code)
+		case((PC_SYM_KEY & key_pressed) ? 8'h00 : key_code)	// PC layout symbols: see pc_sym above (releases still clear KEY)
 		8'h07:
 		begin
 				KEY_Fxx[11]	<= PRESS;	// F12 RESET
