@@ -152,6 +152,7 @@ begin
 				MREQ_n  <= '1';
 				DI_Reg  <= "00000000";
 				CEN_pol <= '0';
+				IntCycleD_n <= "11";	-- else powers up "00": IORQ_n low in the first fetch
 			elsif CEN_p = '1' and CEN_pol = '0' then
 				CEN_pol <= '1';
 				if MCycle = "001" then

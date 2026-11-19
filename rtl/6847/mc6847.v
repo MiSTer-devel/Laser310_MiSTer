@@ -20,6 +20,7 @@ module mc6847 (
                output reg        vsync,
                output reg        hblank,
                output reg        vblank,
+               input             pal,              // 1: 312-line field (50 Hz): 25 extra lines above and below the picture
                input             artifact_en,
                input             artifact_set,
                input             artifact_phase,
@@ -43,7 +44,9 @@ module mc6847 (
   parameter H_LEFT_BORDER    = H_BACK_PORCH + 61+1+3; // adjust for hblank de-assert @sys_count=6
   parameter H_LEFT_RSTADDR   = H_LEFT_BORDER - 16 + 8;
   parameter H_VIDEO          = H_LEFT_BORDER + 256;
-  parameter H_RIGHT_BORDER   = H_VIDEO + 61+1-3;      // "
+  // 456 pixel clocks (228 CPU cycles) per line like the real 6847 (MAME
+  // mc6847.cpp: "scanlines are in fact 228 clock cycles"); was 466 (58.6 Hz).
+  parameter H_RIGHT_BORDER   = H_VIDEO + 61+1-3-10;   // "
   parameter H_TOTAL_PER_LINE = H_RIGHT_BORDER;
 	
 /*	
@@ -58,27 +61,18 @@ module mc6847 (
 */
 
 
-	// NTSC
+   // NTSC: 262 lines. PAL: 312 lines; the 50 extra lines go in the top and
+   // bottom border, like the padding the VZ200 PAL / VZ300 add around the
+   // 6847's field (MAME mc6847.cpp LINES_PADDING_TOP/BOTTOM_PAL = 25). /FS is
+   // low from the end of the picture to the end of vsync: 32 lines NTSC, 57 PAL.
    parameter V2_FRONT_PORCH     = 2;
    parameter V2_VERTICAL_SYNC   = V2_FRONT_PORCH + 2;
    parameter V2_BACK_PORCH      = V2_VERTICAL_SYNC + 12;
-   parameter V2_TOP_BORDER      = V2_BACK_PORCH + 26;  // + 25;  // +25 for PAL
-   parameter V2_VIDEO           = V2_TOP_BORDER + 192;
-   parameter V2_BOTTOM_BORDER   = V2_VIDEO + 27;  // + 25;       // +25 for PAL
-   parameter V2_TOTAL_PER_FIELD = V2_BOTTOM_BORDER;
+   wire [8:0] V2_TOP_BORDER      = V2_BACK_PORCH + (pal ? 9'd26 + 9'd25 : 9'd26);
+   wire [8:0] V2_VIDEO           = V2_TOP_BORDER + 9'd192;
+   wire [8:0] V2_BOTTOM_BORDER   = V2_VIDEO + (pal ? 9'd27 + 9'd25 : 9'd27);
+   wire [8:0] V2_TOTAL_PER_FIELD = V2_BOTTOM_BORDER;
 
-/*
-   // this doesn't seem right	
-	// PAL
-	parameter V2_FRONT_PORCH     = 2;
-   parameter V2_VERTICAL_SYNC   = V2_FRONT_PORCH + 2;
-   parameter V2_BACK_PORCH      = V2_VERTICAL_SYNC + 12;
-   parameter V2_TOP_BORDER      = V2_BACK_PORCH + 26 + 25;  // +25 for PAL
-   parameter V2_VIDEO           = V2_TOP_BORDER + 192;
-   parameter V2_BOTTOM_BORDER   = V2_VIDEO + 27  + 25;       // +25 for PAL
-   parameter V2_TOTAL_PER_FIELD = V2_BOTTOM_BORDER;
-*/
-	
    // internal version of control ports
    wire                          an_g_s;
    wire                          an_s_s;
@@ -171,7 +165,7 @@ module mc6847 (
                 3'b100: begin r = 2'b11; g = 2'b11; b=2'b11; end // white
                 3'b101: begin r = 2'b00; g = 2'b11; b=2'b11; end // cyan
                 3'b110: begin r = 2'b11; g = 2'b00; b=2'b11; end // magenta
-                3'b111: begin r = 2'b11; g = 2'b11; b=2'b00; end // orange
+                3'b111: begin r = 2'b11; g = 2'b10; b=2'b00; end // orange (was the same as yellow)
               endcase
            end
          else
@@ -317,7 +311,7 @@ module mc6847 (
              if (h_count == H_TOTAL_PER_LINE)
                begin
                   h_count = 0;
-                  if (v_count == V2_TOTAL_PER_FIELD)
+                  if (v_count >= V2_TOTAL_PER_FIELD)     // >=: PAL -> NTSC switch mid-field
                     v_count = 0;
                   else
                     v_count = v_count + 1;

@@ -28,7 +28,7 @@ module tv80_core (/*AUTOARG*/
   m1_n, iorq, no_read, write, rfsh_n, halt_n, busak_n, A, dout, mc,
   ts, intcycle_n, IntE, stop,
   // Inputs
-  reset_n, clk, cen, wait_n, int_n, nmi_n, busrq_n, dinst, di, dir, dirset
+  reset_n, clk, cen, wait_n, int_n, nmi_n, busrq_n, dinst, di, dir, dirsp, dirset
   );
   // Beginning of automatic inputs (from unused autoinst inputs)
   // End of automatics
@@ -68,7 +68,8 @@ module tv80_core (/*AUTOARG*/
   output        IntE;           
   output        stop;   
 
-  input [15:0]  dir;   
+  input [15:0]  dir;     // dirset: restart at PC=dir, SP=dirsp, DI (like T80 DIRSet)
+  input [15:0]  dirsp;
   input         dirset;         
 
   reg    m1_n;          
@@ -409,9 +410,24 @@ module tv80_core (/*AUTOARG*/
         end 
       else if (dirset == 1'b1)
         begin
-            $display( "(before PC %x)", PC);
-            PC <= dir;
-            $display( "(after PC %x)", PC);
+          // Hold the core at the start of a fresh opcode fetch from dir (the
+          // state machine below is held at M1/T1 too), so the jump lands on an
+          // instruction boundary. Other registers keep their values.
+          PC <= #1 dir;
+          A <= #1 dir;
+          SP <= #1 dirsp;
+          IR <= #1 8'b00000000;
+          ISet <= #1 2'b00;
+          XY_State <= #1 2'b00;
+          mcycles <= #1 3'b000;
+          Read_To_Reg_r <= #1 5'b00000;
+          Arith16_r <= #1 1'b0;
+          BTR_r <= #1 1'b0;
+          Z16_r <= #1 1'b0;
+          ALU_Op_r <= #1 4'b0000;
+          Save_ALU_r <= #1 1'b0;
+          PreserveC_r <= #1 1'b0;
+          XY_Ind <= #1 1'b0;
         end
       else 
         begin
@@ -1216,6 +1232,21 @@ module tv80_core (/*AUTOARG*/
           Auto_Wait_t2 <= #1 1'b0;
           m1_n <= #1 1'b1;
         end 
+      else if (dirset == 1'b1)
+        begin
+          mcycle <= #1 7'b0000001;
+          tstate <= #1 7'b0000001;
+          Pre_XY_F_M <= #1 3'b000;
+          Halt_FF <= #1 1'b0;
+          NMICycle <= #1 1'b0;
+          IntCycle <= #1 1'b0;
+          IntE_FF1 <= #1 1'b0;
+          IntE_FF2 <= #1 1'b0;
+          No_BTR <= #1 1'b0;
+          Auto_Wait_t1 <= #1 1'b0;
+          Auto_Wait_t2 <= #1 1'b0;
+          m1_n <= #1 1'b1;
+        end
       else
         begin
           if (cen == 1'b1 ) 

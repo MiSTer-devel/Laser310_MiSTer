@@ -43,7 +43,7 @@ endif
 CFLAGS += $(CC_OPT) $(CC_DEFINE) -Iimgui
 LDFLAGS = $(LIBS)
 EXE = ./obj_dir/Vemu
-V_OPT = -O3 --x-assign fast --x-initial fast --noassert 
+V_OPT = -O3 --no-timing -Wno-fatal --x-assign fast --x-initial fast --noassert
 CC_OPT = -O
 
 V_SRC = \
@@ -57,12 +57,14 @@ V_SRC = \
 	$(RTL)/VIDEO_OUT.v \
 	$(RTL)/SVGA_DEFINES.v \
 	$(RTL)/SVGA_TIMING_GENERATION.v \
-	$(RTL)/fdc.v \
+	$(RTL)/vz_floppy.sv \
 	$(RTL)/6847/mc6847.v \
 	$(RTL)/6847/rom_char.v \
 	$(RTL)/reset_de.v \
 	$(RTL)/LaserKeyboard.sv \
 	$(RTL)/vz_loader.sv \
+	$(RTL)/vz_overlay.sv \
+	$(RTL)/vz_tape.sv \
 	$(RTL)/z80_regset.sv \
 	$(RTL)/sprom.v \
 	$(RTL)/spram.sv \
@@ -80,7 +82,7 @@ VOUT = obj_dir/Vemu.cpp
 all: $(EXE)
 
 $(VOUT): $(V_SRC)  Makefile
-	$V -cc $(V_OPT) -LDFLAGS "$(LDFLAGS) " -exe --trace --Mdir ./obj_dir $(V_DEFINE) $(V_INC) $(TOP) -CFLAGS $(CFLAGS) $(V_SRC) $(C_SRC)
+	$V -cc $(V_OPT) -LDFLAGS "$(LDFLAGS) " -exe --trace --Mdir ./obj_dir $(V_DEFINE) $(V_INC) $(TOP) -CFLAGS "$(CFLAGS)" $(V_SRC) $(C_SRC)
 
 $(EXE): $(VOUT) $(C_SRC)
 #	(cd obj_dir; make OPT="-fauto-inc-dec -fdce -fdefer-pop -fdse -ftree-ccp -ftree-ch -ftree-fre -ftree-dce -ftree-dse" -f Vemu.mk)
@@ -91,3 +93,31 @@ fast:
 
 clean:
 	rm -f obj_dir/*
+
+#############################################################################
+# Headless build for automated testing (no SDL / ImGui / OpenGL).
+#   make headless            -> obj_hl/Vemu   (see README.md for the flags)
+#   make headless TRACE=1    -> adds --trace-from/--trace-to (FST waveform)
+#############################################################################
+HL_DIR   = obj_hl
+HL_EXE   = $(HL_DIR)/Vemu
+HL_VSRC  = sim_public.vlt $(filter-out $(RTL)/mc6847_vga.v $(RTL)/PIXEL_DISPLAY.v $(RTL)/CHAR_GEN.v $(RTL)/PIXEL_GEN.v $(RTL)/VIDEO_OUT.v $(RTL)/SVGA_DEFINES.v $(RTL)/SVGA_TIMING_GENERATION.v $(RTL)/LaserKeyboard.sv,$(V_SRC)) $(RTL)/dpram.sv
+HL_CSRC  = sim_headless.cpp
+HL_VFLAGS = -O3 --no-timing --x-assign fast --x-initial fast --noassert -Wno-fatal -Wno-lint -Wno-style \
+	--timescale-override 1ps/1ps -Wno-TIMESCALEMOD +define+SIMULATION=1 -I$(RTL) -I$(RTL)/tv80 $(HL_DEFS)
+HL_CFLAGS = -O2 -std=c++17 -I$(CURDIR)/sim
+ifeq ($(TRACE),1)
+HL_VFLAGS += --trace-fst
+HL_CFLAGS += -DHL_TRACE=1
+endif
+
+headless: $(HL_EXE)
+
+$(HL_EXE): $(HL_VSRC) $(HL_CSRC) Makefile
+	$V --cc --exe --build -j 0 $(HL_VFLAGS) --top-module emu --Mdir $(HL_DIR) \
+		-CFLAGS "$(HL_CFLAGS)" $(HL_VSRC) $(HL_CSRC)
+
+headless-clean:
+	rm -rf $(HL_DIR)
+
+.PHONY: headless headless-clean

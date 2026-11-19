@@ -3,6 +3,7 @@
 //`define	BENNVENN_DOS_ROM
 `define BASE_DOS_ROM
 `define BOOT_ROM_6000
+//`define HWDEBUG		// text rows 0-4 show the first opcode fetches after reset (hardware bring-up)
 `define BASE_RAM_78	//2k
 `define BASE_RAM_16K
 `define RAM_16K_EXPANSION
@@ -71,11 +72,13 @@ output         h_blank,
 output         v_blank,
 output         ce_pix,
 input				VIDEO_MODE,
+input				video_pal,		// 1: 312-line PAL field (50 Hz), 0: 262-line NTSC (60 Hz)
 output	[1:0]	AUD_ADCDAT,
-output	[7:0]	audio_s,
+output	[15:0]	audio_s,		// signed
 input				key_strobe,
 input				key_pressed,
 input		[7:0]	key_code,
+input				kbd_pc,			// OSD Keyboard layout: 0 VZ (keys by position), 1 PC (symbols as printed)
 input		[9:0]	SWITCH,
 input				UART_RXD,
 output			UART_TXD,
@@ -97,7 +100,38 @@ input fire_2,
 input right_2,
 input left_2,
 input down_2,
-input up_2
+input up_2,
+// Cassette input level (comparator output). Hardware: tie 0 until the
+// tape player / ADC path exists; the Verilator harness drives it from --tape.
+input cass_in,
+input hint_en,			// OSD Load hints (vz_overlay.sv)
+// tape (vz_tape.sv): hps_io image slot S0 and its OSD rows
+input tape_overlay_en,		// OSD Tape overlay
+input tape_turbo_en,		// OSD Tape speed 3x
+input tape_audio_en,		// OSD Tape audio
+input tape_invert,			// OSD Tape polarity: Inverted
+input [1:0] tape_pitch,		// 0 Normal, 1 +6%, 2 +12%, 3 Auto (vz_tape.sv)
+input tape_deck_play,		// OSD Tape deck: Play (runs whenever a tape is mounted, for loaders that don't use the ROM)
+input tape_rewind,			// OSD Rewind tape (pulse)
+input img_mounted,
+input [63:0] img_size,
+output [31:0] sd_lba,
+output sd_rd,
+input sd_ack,
+input [8:0] sd_buff_addr,
+input [7:0] sd_buff_dout,
+input sd_buff_wr,
+output tape_ready,			// pulse: tape mounted/rewound and playable
+output tape_bad,			// pulse: tape format not supported
+// floppy drives 1 and 2 (hps_io S1/S2); img_size, sd_buff_* shared with the tape
+input  [1:0] disk_img_mounted,
+input        img_readonly,
+output [31:0] disk_sd_lba,
+output [1:0] disk_sd_rd,
+output [1:0] disk_sd_wr,
+input  [1:0] disk_sd_ack,
+output [7:0] disk_sd_buff_din,
+output       disk_activity
 
 ); 
 
@@ -124,12 +158,16 @@ wire						CPU_BUSRQ;
 wire						CPU_BUSAK;
 wire						CPU_RFSH;
 (*keep*)wire			CPU_RESET_N;
+wire				CPU_CEN_P, CPU_CEN_N;	// T80pa clock enables (FPGA build)
+wire				DIRSET_M1;
+wire	[7:0]	CPU_DI_MUX;
 (*keep*)wire			CPU_HALT_N;
 (*keep*)wire			CPU_MREQ_N;
 (*keep*)wire			CPU_RD_N;
 (*keep*)wire			CPU_WR_N;
 (*keep*)wire			CPU_IORQ_N;
 (*keep*)wire			CPU_INT_N;
+wire				VDG_FS_N;		// 6847 /FS: Z80 /INT and keyboard bit 7
 (*keep*)wire			CPU_M1_N;
 wire						CPU_BUSRQ_N;
 wire						CPU_BUSAK_N;
@@ -220,7 +258,9 @@ wire				EMU_KEY_EN;
 // cassette
 
 (*keep*)wire	[1:0]	CASS_OUT;
+wire			TAPE_LEVEL, TAPE_FAST;	// vz_tape (below)
 (*keep*)wire			CASS_IN;
+assign CASS_IN = cass_in | TAPE_LEVEL;	// cass_in: sim harness direct drive (tied 0 on MiSTer)
 (*keep*)wire			CASS_IN_L;
 (*keep*)wire			CASS_IN_R;
 
@@ -235,7 +275,7 @@ wire				EMU_KEY_EN;
 reg		[16:0]		RESET_KEY_COUNT;
 wire				RESET_KEY_N, RESET_N;
 
-wire				TURBO_SPEED		=	SWITCH[0];
+wire				TURBO_SPEED		=	SWITCH[0] | TAPE_FAST;	// OSD Turbo, or 3x while the tape plays
 
 
 RESET_DE RESET_DE(
@@ -392,7 +432,10 @@ assign CPU_HALT= ~CPU_HALT_N;
 assign CPU_BUSAK = ~CPU_BUSAK_N;
 assign CPU_RESET_N = ~CPU_RESET;
 //assign CPU_INT_N = VIDEO_MODE ? ~CPU_INT : ~VGA_VS;
-assign CPU_INT_N =  ~VGA_VS; 
+// Z80 /INT is wired to the 6847 FS pin (pin 37): low for the 32 lines of
+// vertical retrace, not just the 2-line sync pulse (VZ200 Hardware Interrupt
+// article; MAME fsync_wr_callback -> INT, inverted).
+assign CPU_INT_N = VDG_FS_N;
 wire VGA_VS2;
 assign CPU_BUSRQ_N = ~CPU_BUSRQ;
 
@@ -415,8 +458,9 @@ tv80s Z80CPU (
 	.int_n(CPU_INT_N),
 	.nmi_n(1'b1),
 	.busrq_n(CPU_BUSRQ_N),
-	.di(CPU_DI),
+	.di(CPU_DI_MUX),	// same IN-port mux as the T80pa path
 	.dir(execute_addr),
+	.dirsp(16'hB7BB),		// same SP z80_regset gives T80pa
 	.dirset(execute_enable)
 
 );
@@ -433,18 +477,23 @@ t80pa Z80CPU (
 	.A(ACPU_A),
 	.do(ACPU_DO),
 	.reset_n(CPU_RESET_N),
-//	.clk(CPU_CLK),
-	.clk(GCLK),
+	// On the PLL clock with enables, not the GCLK ripple clock (unconstrained in
+	// Quartus). CEN_p fires where GCLK used to rise, CEN_n half a T-state later:
+	// one T-state per 12 clocks (4 in turbo), the same rate as tv80s in the sim.
+	.clk(CLK42MHZ),
+	.cen_p(CPU_CEN_P),
+	.cen_n(CPU_CEN_N),
 	.wait_n(1'b1),
 	.int_n(CPU_INT_N),
 	.nmi_n(1'b1),
 	.busrq_n(CPU_BUSRQ_N),
-	.di(CPU_IORQ_N ? CPU_DI : CPU_D_INPORT),
+	.di(CPU_DI_MUX),
 
 	.DIR(DIR),
-	.DIRSet(DIRSet)
+	.DIRSet(DIRSET_M1)
 
 );
+
 `endif
 
 z80_regset #(16'hB7BB) regset (
@@ -458,6 +507,24 @@ wire [211:0] DIR;       // Z80 Register set as defined in T80pa / T80
 wire DIRSet;                // Signal to set registers
 wire [15:0] execute_addr;     // Start address for program start
 wire execute_enable;   	    // Jump to start address (out_execute_addr) - Not implemented
+
+`ifndef VERILATOR
+// .vz autostart on T80pa: DIRSet loads PC but leaves the instruction in
+// progress running, which can overwrite PC again (RET, CALL, JP in BASIC's
+// idle loop). Hold the request until the next opcode fetch starts (M1 falls,
+// T1) and set PC there for one clock, between the clock enables, so the fetch
+// reads the start address.
+reg DIRSET_M1_R, dirset_pend, dirset_old, dirset_m1_old;
+always @(posedge CLK42MHZ) begin
+	dirset_old    <= DIRSet;
+	dirset_m1_old <= CPU_M1_N;
+	DIRSET_M1_R   <= 1'b0;
+	if (~CPU_RESET_N) dirset_pend <= 1'b0;
+	else if (DIRSet & ~dirset_old) dirset_pend <= 1'b1;
+	else if (dirset_pend & dirset_m1_old & ~CPU_M1_N) begin dirset_pend <= 1'b0; DIRSET_M1_R <= 1'b1; end
+end
+assign DIRSET_M1 = DIRSET_M1_R;
+`endif
 
 
 
@@ -477,6 +544,11 @@ wire GCLK =  CPU_CLK ;
 assign CPU_A = vz_wr ? vz_addr : ACPU_A;
 assign CPU_DO = vz_wr ? vz_data : ACPU_DO;
 wire GCLK = vz_wr ? 1'b0  : CPU_CLK ;
+// I/O read: the IN port. Interrupt acknowledge (IORQ with M1): FFh, the VZ's
+// floating bus, so IM 0 runs RST 38h like IM 1.
+assign CPU_DI_MUX = CPU_IORQ_N ? CPU_DI : (CPU_M1_N ? CPU_D_INPORT : 8'hFF);
+assign CPU_CEN_P = (CLK == 4'd0) & ~vz_wr;
+assign CPU_CEN_N = (CLK == (TURBO_SPEED ? 4'd2 : 4'd6)) & ~vz_wr;
 assign CPU_WR_N = vz_wr ? 1'b0 : ACPU_WR_N;
 assign MEM_OP_WR = vz_wr ? 1'b1 : AMEM_OP_WR;
 assign CPU_IORQ_N = vz_wr ? 1'b1: ACPU_IORQ_N;
@@ -492,10 +564,10 @@ vz_loader vz_loader(
 	
         .I_RST(~CPU_RESET_N),
 
-        .ioctl_wr(dn_wr),
+        .ioctl_wr(dn_wr && dn_index == 8'd1),            // .VZ only (index 0 is Load ROM)
         .ioctl_addr(dn_addr),
         .ioctl_data(dn_data),
-        .ioctl_download(dn_download),
+        .ioctl_download(dn_download && dn_index == 8'd1),
 		  
         .vz_addr(vz_addr),
         .vz_data(vz_data),
@@ -593,7 +665,7 @@ assign RAM_CDEF_WR		= ({ADDRESS_CDEF,MEM_OP_WR,CPU_WR,CPU_IORQ} == 4'b1110)?1'b1
 assign CPU_DI = 	
 				ADDRESS_ROM		? SYS_ROM_DATA		:
 				ADDRESS_AUTOSTARTROM	? AUTOSTART_ROM_DATA	:
-				ADDRESS_DOSROM		? DOS_ROM_DATA		:
+				ADDRESS_DOSROM		? DOS_ROM_DATA_P	:
 				ADDRESS_RAM_78		? RAM_78_DATA		:
 `ifdef BOOT_ROM_6000
 				ADDRESS_BOOTROM_6000	? BOOT_ROM_6000_DATA	:
@@ -626,7 +698,9 @@ assign CPU_DI =
 		);
 	`else
 
-	sprom #(
+	// OSD Load ROM (ioctl index 0, games/Laser/boot0.rom at core start): replaces
+	// the 16 KB BASIC ROM. The machine is held in reset while it loads.
+	sprom_wr #(
 	`ifndef VERILATOR
 		.init_file("./roms/sysrom.mif"),
 	`else
@@ -637,7 +711,10 @@ assign CPU_DI =
 	sys_rom(
 		.address(CPU_A[13:0]),
 		.clock(CLK42MHZ),
-		.q(SYS_ROM_DATA)
+		.q(SYS_ROM_DATA),
+		.wr(dn_download && dn_wr && dn_index == 8'd0 && dn_addr[15:14] == 2'b00),
+		.wr_address(dn_addr[13:0]),
+		.wr_data(dn_data)
 		);
 
 	`endif
@@ -659,6 +736,13 @@ DOS_ROM(
 	.q(DOS_ROM_DATA)
 	);
 `endif
+// VZ DOS 1.2 patch, as MAME (bus/vtech/memexp/floppy.cpp device_start): two
+// sector-read wait loops at 5673h/5683h jump back onto their IN A,(11h), so
+// while they wait for a flux they keep clearing the controller's flip-flop and
+// shifting junk into the byte. MAME: "Obvious bugs... must have worked by
+// sheer luck and very subtle timings". JP P,5675h / 5685h loop on IN A,(C) only.
+wire [7:0] DOS_ROM_DATA_P = (CPU_A[12:0] == 13'h1678) ? 8'h75 :
+                            (CPU_A[12:0] == 13'h1688) ? 8'h85 : DOS_ROM_DATA;
 
 //====================================================================
 
@@ -759,8 +843,51 @@ vram_8k(
 	.data_a_o(VRAM_DATA_OUT),
 	.clk_b_i(VDG_RD),
 	.addr_b_i(VDG_ADDRESS[12:0]),
+`ifdef HWDEBUG
+	.data_b_o(VDG_DATA_RAM)
+`else
 	.data_b_o(VDG_DATA)
+`endif
 	);
+`endif
+
+`ifdef HWDEBUG
+// Hardware debug, keyboard: row 0 = KEY matrix (16 hex), row 1 = key_code,
+// pressed, EMU_KEY_EN, key_strobe, LATCHED_KEY_DATA, last 68xx read address,
+// its data, count of 68xx reads.
+wire [7:0] VDG_DATA_RAM;
+reg [15:0] dbg_ka, dbg_kn; reg [7:0] dbg_kd; reg dbg_ord;
+always @(posedge CLK42MHZ) begin
+	dbg_ord <= CPU_RD_N;
+	if (~CPU_MREQ_N & ~CPU_RD_N & dbg_ord & ADDRESS_IO) begin dbg_ka <= CPU_A; dbg_kn <= dbg_kn + 1'b1; end
+	if (~CPU_MREQ_N & ~CPU_RD_N & ADDRESS_IO) dbg_kd <= CPU_DI;
+end
+function [7:0] hx(input [3:0] n); hx = (n < 10) ? 8'h30 + n : 8'h01 + n - 4'd10; endfunction
+reg [7:0] dbg_c; reg dbg_sel; reg [3:0] dbg_n;
+wire [3:0] dbg_i = VDG_ADDRESS[3:0];
+always @(posedge VDG_RD) begin
+	dbg_sel <= VDG_ADDRESS[12:4] == 9'd0 || VDG_ADDRESS[12:4] == 9'd2;
+	if (VDG_ADDRESS[5] == 1'b0) dbg_c <= hx(KEY[{~dbg_i, 2'b11} -: 4]);
+	else case (dbg_i)
+		4'd0: dbg_c <= hx(key_code[7:4]);
+		4'd1: dbg_c <= hx(key_code[3:0]);
+		4'd2: dbg_c <= hx({key_pressed, EMU_KEY_EN, key_strobe, 1'b0});
+		4'd3: dbg_c <= 8'h20;
+		4'd4: dbg_c <= hx(LATCHED_KEY_DATA[7:4]);
+		4'd5: dbg_c <= hx(LATCHED_KEY_DATA[3:0]);
+		4'd6: dbg_c <= 8'h20;
+		4'd7: dbg_c <= hx(dbg_ka[7:4]);
+		4'd8: dbg_c <= hx(dbg_ka[3:0]);
+		4'd9: dbg_c <= hx(dbg_kd[7:4]);
+		4'd10: dbg_c <= hx(dbg_kd[3:0]);
+		4'd11: dbg_c <= 8'h20;
+		4'd12: dbg_c <= hx(dbg_kn[15:12]);
+		4'd13: dbg_c <= hx(dbg_kn[11:8]);
+		4'd14: dbg_c <= hx(dbg_kn[7:4]);
+		4'd15: dbg_c <= hx(dbg_kn[3:0]);
+	endcase
+end
+assign VDG_DATA = dbg_sel ? dbg_c : VDG_DATA_RAM;
 `endif
 
 `ifdef VRAM_24K		// Super SHRG!
@@ -829,31 +956,34 @@ end
 wire vs,hs;
 assign VGA_VS=~vs;
 assign VGA_HS=~hs;
+wire [7:0] VDG_RED, VDG_GREEN, VDG_BLUE;	// 6847 picture, before the hint overlay
 mc6847 mc6847(
   .clk(CLK42MHZ),
-  `ifdef VERILATOR
-  .clk_ena(1),
+  `ifdef SIM_FAST_VIDEO
+  .clk_ena(1),			// old sim shortcut: video 3x too fast vs CPU
   `else
   .clk_ena(clk_14M318_ena),
   `endif
   .reset(~RESET_N),
   .da0(),
+  .fs_n(VDG_FS_N),
   .videoaddr(VDG_ADDRESS),
   .dd(VDG_DATA),
   .an_g(LATCHED_AG),
-  .an_s(1'b0),
+  .an_s(VDG_DATA[7]),	// VRAM D7 = A/S per character: 80h-FFh are SG4 blocks, colour in bits 6:4 (MAME vram_r)
   .intn_ext(1'b0), // ?
   .gm(LATCHED_GM),
 //  .gm(3'b010 ),
   .css(LATCHED_CSS),
-  .inv(1'b0),
-  .red(VGA_RED),
-  .green(VGA_GREEN),
-  .blue(VGA_BLUE),
+  .inv(1'b0),			// VRAM D6 = INV on the VZ; the 4 KB char ROM already holds the inverse glyphs for 40h-7Fh
+  .red(VDG_RED),
+  .green(VDG_GREEN),
+  .blue(VDG_BLUE),
   .hsync(hs),
   .vsync(vs),
   .hblank(h_blank),
   .vblank(v_blank),
+  .pal(video_pal),
   .artifact_en(1'b1),
   .artifact_set(1'b0),
   .artifact_phase(1'b1),
@@ -862,6 +992,95 @@ mc6847 mc6847(
   .pixel_clk(ce_pix)
 );
 assign VDG_RD = CLK42MHZ;
+
+// ---------------------------------------------------------------------------
+// Cassette. The VZ has no motor relay: the deck plays while the CPU runs the
+// BASIC ROM's tape-read code, 35E1h (TAPE_FIND_PROGRAM) to 37F3h (end of
+// TAPE_READ_BIT), which CLOAD, CRUN, VERIFY and programs calling 3775h/378Fh
+// all use, and for 2^20 clocks (24 ms) after (the ROM leaves it briefly per
+// byte for the BREAK check and messages). OSD Tape deck: Play keeps it playing
+// whenever a tape is mounted, for programs with their own loaders (2018AD). While it plays with Tape speed 3x
+// the CPU runs 3x (TURBO_SPEED) and the tape too (tape standard rule 7).
+// ---------------------------------------------------------------------------
+wire        TAPE_ROM_PC = !CPU_M1_N && !CPU_MREQ_N && CPU_A >= 16'h35E1 && CPU_A <= 16'h37F3;
+reg  [19:0] TAPE_HOLD = 20'd0;
+always @(posedge CLK42MHZ)
+	if (TAPE_ROM_PC)            TAPE_HOLD <= 20'hFFFFF;
+	else if (TAPE_HOLD != 0)    TAPE_HOLD <= TAPE_HOLD - 20'd1;
+wire        TAPE_ROM  = TAPE_HOLD != 0;
+wire        TAPE_PLAY = TAPE_ROM | tape_deck_play;
+// 3x only while the ROM's tape code runs, never for a custom loader or a game (rule 6)
+// CLOAD of a BASIC program ends here (back to READY without RUN): hint "TYPE RUN"
+wire        TAPE_BASIC_CLOADED = !CPU_M1_N && !CPU_MREQ_N && CPU_A == 16'h36E0;
+
+wire        TAPE_LEVEL_RAW, TAPE_LOADED, TAPE_AT_START, TAPE_AT_END;
+wire [31:0] TAPE_POS, TAPE_LEN;
+wire [17:0] TAPE_HZ;
+wire [15:0] TAPE_UNDERFLOWS;
+assign      TAPE_LEVEL = TAPE_LEVEL_RAW;
+
+vz_tape vz_tape (
+  .clk(CLK42MHZ),
+  .img_mounted(img_mounted),
+  .img_size(img_size),
+  .sd_lba(sd_lba),
+  .sd_rd(sd_rd),
+  .sd_ack(sd_ack),
+  .sd_buff_addr(sd_buff_addr),
+  .sd_buff_dout(sd_buff_dout),
+  .sd_buff_wr(sd_buff_wr),
+  .rewind(tape_rewind),
+  .play(TAPE_PLAY),
+  .turbo_ok(tape_turbo_en & TAPE_ROM),
+  .invert(tape_invert),
+  .pitch(tape_pitch),
+  .level(TAPE_LEVEL_RAW),
+  .loaded(TAPE_LOADED),
+  .fast(TAPE_FAST),
+  .at_start(TAPE_AT_START),
+  .at_end(TAPE_AT_END),
+  .position(TAPE_POS),
+  .length(TAPE_LEN),
+  .hz(TAPE_HZ),
+  .ready_pulse(tape_ready),
+  .bad_pulse(tape_bad),
+  .underflows(TAPE_UNDERFLOWS)
+);
+
+// status bar and next-step hints over the picture
+wire       hint_show, bar_show;
+wire [1:0] tape_hint;
+vz_overlay vz_overlay (
+  .clk(CLK42MHZ),
+  .reset(~RESET_N),
+  .hint_en(hint_en),
+  .tape_en(tape_overlay_en),
+  .dn_download(dn_download),
+  .dn_index(dn_index),
+  .dn_addr(dn_addr),
+  .dn_data(dn_data),
+  .dn_wr(dn_wr),
+  .tape_loaded(TAPE_LOADED),
+  .tape_playing(TAPE_PLAY && !TAPE_AT_END),
+  .tape_fast(TAPE_FAST),
+  .tape_at_start(TAPE_AT_START),
+  .tape_pos(TAPE_POS),
+  .tape_len(TAPE_LEN),
+  .tape_hz(TAPE_HZ),
+  .tape_ready(tape_ready),
+  .basic_cloaded(TAPE_BASIC_CLOADED),
+  .key_strobe(key_strobe),
+  .key_pressed(key_pressed),
+  .key_code(key_code),
+  .ce_pix(ce_pix),
+  .hblank(h_blank),
+  .vblank(v_blank),
+  .r_in(VDG_RED), .g_in(VDG_GREEN), .b_in(VDG_BLUE),
+  .r_out(VGA_RED), .g_out(VGA_GREEN), .b_out(VGA_BLUE),
+  .show_vz(hint_show),
+  .show_bar(bar_show),
+  .show_tape(tape_hint)
+);
 /*
 //=====================================================================
 MC6847_VGA MC6847_VGA(
@@ -958,8 +1177,66 @@ A7  J   ；  K   :   L   H  687FH      56
 // R-Shift
 
 
-wire	[63:0]	KEY_C		=	EMU_KEY_EN?EMU_KEY:KEY;
-wire	[9:0]	KEY_EX_C	=	EMU_KEY_EN?EMU_KEY_EX:KEY_EX;
+// PC keyboard layout (OSD Input: Keyboard layout = PC). A PC symbol key types the
+// symbol printed on it: the VZ key that carries that symbol is pressed and the VZ
+// SHIFT line is forced to what that symbol needs (PC Shift+; gives ':', which is
+// unshifted on the VZ). VZ symbols (MAME vtech1.cpp): ! " # $ % & ' ( ) @ on
+// Shift+1..0, = on Shift+-, + on Shift+;, * on Shift+:, / ? on Shift+K/L,
+// ^ \ on Shift+N/M, [ ] on Shift+O/P, ~ on Shift+SPACE. _ { } | have no VZ key.
+// One symbol at a time; the result is latched when the key goes down.
+// {used, no VZ key, VZ shift, VZ KEY index}
+function [8:0] pc_sym;
+	input [7:0] code;
+	input       sh;
+	case (code)
+	8'h1E: pc_sym = sh ? {3'b101, 6'd44} : {3'b100, 6'd25};	// 2 @     -> 2 / Shift+0
+	8'h36: pc_sym = sh ? {3'b101, 6'd32} : {3'b100, 6'd40};	// 6 ^     -> 6 / Shift+N
+	8'h3D: pc_sym = sh ? {3'b101, 6'd40} : {3'b100, 6'd45};	// 7 &     -> 7 / Shift+6
+	8'h3E: pc_sym = sh ? {3'b101, 6'd58} : {3'b100, 6'd43};	// 8 *     -> 8 / Shift+:
+	8'h46: pc_sym = sh ? {3'b101, 6'd43} : {3'b100, 6'd41};	// 9 (     -> 9 / Shift+8
+	8'h45: pc_sym = sh ? {3'b101, 6'd41} : {3'b100, 6'd44};	// 0 )     -> 0 / Shift+9
+	8'h4E: pc_sym = sh ? {3'b110, 6'd0 } : {3'b100, 6'd42};	// - _     -> - / none
+	8'h55: pc_sym = sh ? {3'b101, 6'd60} : {3'b101, 6'd42};	// = +     -> Shift+- / Shift+;
+	8'h54: pc_sym = sh ? {3'b110, 6'd0 } : {3'b101, 6'd49};	// [ {     -> Shift+O / none
+	8'h5B: pc_sym = sh ? {3'b110, 6'd0 } : {3'b101, 6'd52};	// ] }     -> Shift+P / none
+	8'h5D: pc_sym = sh ? {3'b110, 6'd0 } : {3'b101, 6'd37};	// \ |     -> Shift+M / none
+	8'h4C: pc_sym = sh ? {3'b100, 6'd58} : {3'b100, 6'd60};	// ; :     -> ; / :
+	8'h52: pc_sym = sh ? {3'b101, 6'd25} : {3'b101, 6'd45};	// ' "     -> Shift+7 / Shift+2
+	8'h4A: pc_sym = sh ? {3'b101, 6'd57} : {3'b101, 6'd59};	// / ?     -> Shift+K / Shift+L
+	8'h0E: pc_sym = sh ? {3'b101, 6'd36} : {3'b100, 6'd42};	// ` ~     -> - / Shift+SPACE
+	default: pc_sym = 9'd0;
+	endcase
+endfunction
+
+wire	[8:0]	PC_SYM		=	pc_sym(key_code, ~KEY[18] | ~KEY_EX[0]);
+// With Ctrl held the keys stay positional, so Ctrl+key functions (RUBOUT = Ctrl+;,
+// INVERSE = Ctrl+:, BREAK = Ctrl+-) are where the VZ keyboard has them.
+wire			PC_SYM_KEY	=	kbd_pc & PC_SYM[8] & KEY[10];	// handled here, not in the case below
+reg				SYM_ON, SYM_NONE, SYM_SHIFT;
+reg		[5:0]	SYM_KEY;
+reg		[7:0]	SYM_CODE;
+
+always @(posedge KB_CLK[3] or negedge RESET)
+begin
+	if(~RESET)
+		SYM_ON <= 1'b0;
+	else if(!kbd_pc || (!key_pressed && SYM_CODE == key_code))
+		SYM_ON <= 1'b0;						// released (also with Ctrl held by then)
+	else if(PC_SYM_KEY && key_pressed && !(SYM_ON && SYM_CODE == key_code))
+	begin
+		SYM_ON <= 1'b1;
+		SYM_CODE <= key_code;
+		{SYM_NONE, SYM_SHIFT, SYM_KEY} <= PC_SYM[7:0];
+	end
+end
+
+wire	[63:0]	SYM_MASK	=	(SYM_ON && !SYM_NONE) ? (64'd1 << SYM_KEY) : 64'd0;
+wire	[63:0]	KEY_S		=	KEY & ~SYM_MASK;
+wire	[63:0]	KEY_PC		=	SYM_ON ? {KEY_S[63:19], ~SYM_SHIFT, KEY_S[17:0]} : KEY;
+wire	[9:0]	KEY_EX_PC	=	SYM_ON ? {KEY_EX[9:1], 1'b1} : KEY_EX;
+
+wire	[63:0]	KEY_C		=	EMU_KEY_EN?EMU_KEY:KEY_PC;
+wire	[9:0]	KEY_EX_C	=	EMU_KEY_EN?EMU_KEY_EX:KEY_EX_PC;
 
 //wire KEY_CTRL_ULRD = (KEY_EX[7:4]==4'b1111);
 wire KEY_CTRL_ULRD_BRK = (KEY_EX[8:3]==6'b111111);
@@ -980,7 +1257,10 @@ wire KEY_DATA_BIT1 = (CPU_A[7:0]|{KEY[57], KEY[49], KEY[41], KEY[33], KEY[25], K
 wire KEY_DATA_BIT0 = (CPU_A[7:0]|{KEY[56], KEY[48], KEY[40], KEY[32], KEY[24], KEY[16], KEY[ 8], KEY[ 0]})==8'hff;
 */
 
-wire KEY_DATA_BIT7 = 1'b1;	// 没有空置，具体用途没有理解
+// Bit 7 = the 6847's /FS: 0 during the 32 lines of vertical blanking, 1 during
+// the picture (VZ200 TRM; MAME vtech1.cpp keyboard_r fs_r()). Games poll it to
+// wait for vblank (TENNIS, 3D-MAZE, BENNY ...).
+wire KEY_DATA_BIT7 = VDG_FS_N;
 //wire KEY_DATA_BIT6 = CASS_IN;
 wire KEY_DATA_BIT6 = ~CASS_IN;
 
@@ -1034,7 +1314,7 @@ begin
 		if(RESET_KEY_COUNT[16]==1'b0)
 			RESET_KEY_COUNT <= RESET_KEY_COUNT+1;
 
-		case(key_code)
+		case((PC_SYM_KEY & key_pressed) ? 8'h00 : key_code)	// PC layout symbols: see pc_sym above (releases still clear KEY)
 		8'h07:
 		begin
 				KEY_Fxx[11]	<= PRESS;	// F12 RESET
@@ -1372,114 +1652,59 @@ cass_ram_2k_altera cass_buf(
 assign	CASS_OUT = EMU_CASS_EN ? EMU_CASS_DAT : {LATCHED_IO_DATA_WR[2], 1'b0};
 
 (*keep*)wire trap = (CPU_RD|CPU_WR) && (CPU_A[15:12] == 4'h0);
-//assign audio_s = 0;
-//assign audio_s = { aud,aud,aud,aud,1'b0,1'b0,1'b0,1'b0};
-assign audio_s = { LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[0],1'b0,1'b0,1'b0,1'b0};
-
-//assign audio_s = { LATCHED_IO_DATA_WR[5],LATCHED_IO_DATA_WR[0],1'b0,1'b0,1'b0,1'b0,1'b0,1'b0};
-//assign audio_s = { LATCHED_IO_DATA_WR[5]^LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[5]^LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[5]^LATCHED_IO_DATA_WR[0],1'b0,1'b0,1'b0,1'b0,1'b0,1'b0};
-wire aud = LATCHED_IO_DATA_WR[0]|LATCHED_IO_DATA_WR[5];
+// Sound, signed 16-bit. The piezo is driven push-pull by latch bits 0 and 5:
+// level = bit0 - bit5 (MAME vtech1 speaker_levels {0, +1, -1, 0}), so 1-bit
+// music engines that drive the two bits differently get three levels. With
+// Tape audio On the tape input and the cassette output (latch bit 2) are mixed
+// in quietly. sys/audio_out removes DC and low-passes.
+wire signed [15:0] SND_SPK  = (LATCHED_IO_DATA_WR[0] == LATCHED_IO_DATA_WR[5]) ? 16'sd0 :
+                              LATCHED_IO_DATA_WR[0] ? 16'sd12288 : -16'sd12288;
+wire signed [15:0] SND_TIN  = !tape_audio_en ? 16'sd0 : TAPE_LEVEL ? 16'sd3072 : -16'sd3072;
+wire signed [15:0] SND_TOUT = !tape_audio_en ? 16'sd0 : LATCHED_IO_DATA_WR[2] ? 16'sd3072 : -16'sd3072;
+assign audio_s = SND_SPK + SND_TIN + SND_TOUT;
 assign AUD_ADCDAT = {LATCHED_IO_DATA_WR[0],LATCHED_IO_DATA_WR[5]};
 
 
-// floppy
-wire				ADDRESS_IO_FDC;
-wire				ADDRESS_IO_FDC_CT;
-wire				ADDRESS_IO_FDC_DATA;
-wire				ADDRESS_IO_FDC_POLL;
-wire				ADDRESS_IO_FDC_WP;
-reg		[7:0]		LATCHED_IO_FDC;
-reg		[7:0]		LATCHED_IO_FDC_CT;
-reg		[7:0]		LATCHED_RAM_DATA_FDC;
+// ---------------------------------------------------------------------------
+// Floppy controller and two drives (rtl/vz_floppy.sv), fitted with the DOS ROM
+// (OSD Dos Rom On). Replaces the DD20 board's FDC_IF (rtl/fdc.v), which was
+// never connected to the CPU.
+// ---------------------------------------------------------------------------
+reg  CPU_TICK_OLD;
+always @(posedge CLK42MHZ) CPU_TICK_OLD <= GCLK;
+wire CPU_TICK = GCLK & ~CPU_TICK_OLD;		// one pulse per CPU T-state
+wire [7:0] FDC_DOUT;
+wire ADDRESS_IO_FDC = LATCHED_DOSROM_EN && CPU_A[7:2] == 6'b000100;
 
-// floppy
-(*keep*)wire					FDC_RAM_R;
-(*keep*)wire					FDC_RAM_W;
-(*keep*)wire		[17:0]		FDC_RAM_ADDR_R;
-(*keep*)wire		[17:0]		FDC_RAM_ADDR_W;
-reg			[7:0]		LAST_WRITE_DATA;
-(*keep*)wire		[7:0]		FDC_RAM_DATA_W;
-
-(*keep*)wire	[7:0]		FLOPPY_RD_DATA;
-(*keep*)wire	[7:0]		FLOPPY_DATA;
-
-// FDC
-//				if({CPU_IORQ,CPU_RD,CPU_WR,ADDRESS_IO_FDC_CT}==4'b1011)
-//					LATCHED_IO_FDC_CT	<=	CPU_DO;
-
-//				if({CPU_IORQ,CPU_RD,CPU_WR}==3'b110)
-//					LATCHED_IO_FDC	<=	ADDRESS_IO_FDC_POLL	?	{FDC_POLL, 7'h7F}	:
-//										ADDRESS_IO_FDC_DATA	?	FDC_DATA			:
-//										ADDRESS_IO_FDC_WP	?	{FDC_WP, 7'h7F}		:
-//										8'hFF;
-wire FLOPPY_WP_READ	= 1'b0;
-wire RAM_ADDRESS_FD_R	=		FDC_RAM_ADDR_R;
-wire RAM_ADDRESS_FD_W	=		FDC_RAM_ADDR_W;
-
-assign ADDRESS_IO_FDC	=	(CPU_A[7:2] == 6'b000100)?1'b1:1'b0;
-
-assign ADDRESS_IO_FDC_CT	=	(CPU_A[7:0] == 8'h10)?1'b1:1'b0;
-assign ADDRESS_IO_FDC_DATA	=	(CPU_A[7:0] == 8'h11)?1'b1:1'b0;
-assign ADDRESS_IO_FDC_POLL	=	(CPU_A[7:0] == 8'h12)?1'b1:1'b0;
-assign ADDRESS_IO_FDC_WP	=	(CPU_A[7:0] == 8'h13)?1'b1:1'b0;
-
-
-wire	[7:0]		FDC_DATA;
-wire				FDC_POLL;
-wire				FDC_WP;
-
-wire	[7:0]		SECTOR_BYTE;
-wire	[7:0]		TRACK1_NO;
-wire	[7:0]		TRACK2_NO;
-wire				DRIVE1;
-wire				DRIVE2;
-wire				MOTOR;
-
-wire		FDC_IO_R;
-wire		FDC_IO_W;
-
-wire		FDC_SIG;
-wire		FDC_SIG_CLK;
-
-wire FDC_IO		=	(CPU_IORQ&ADDRESS_IO_FDC);
-wire FDC_IO_POLL	=	(CPU_IORQ&ADDRESS_IO_FDC_POLL);
-wire FDC_IO_DATA	=	(CPU_IORQ&ADDRESS_IO_FDC_DATA);
-wire FDC_IO_CT	=	(CPU_IORQ&ADDRESS_IO_FDC_CT);
-
-FDC_IF FDC_U (
-	.FDC_CLK(CPU_CLK),
-	.RESET_N(RESET_N),
-	.SW(SWITCH[3:2]),
-	.DBG(SWITCH[9:6]),
-
-	.FDC_RAM_R(FDC_RAM_R),
-	.FDC_RAM_W(FDC_RAM_W),
-	.FDC_RAM_ADDR_R(FDC_RAM_ADDR_R),
-	.FDC_RAM_ADDR_W(FDC_RAM_ADDR_W),
-	.FDC_RAM_DATA_R(LATCHED_RAM_DATA_FDC),
-	.FDC_RAM_DATA_W(FDC_RAM_DATA_W),
-
-	.FDC_IO(FDC_IO),
-	.FDC_IO_POLL(FDC_IO_POLL),
-	.FDC_IO_DATA(FDC_IO_DATA),
-	.FDC_IO_CT(FDC_IO_CT),
-
-	.FDC_SIG(FDC_SIG),
-	.FDC_SIG_CLK(FDC_SIG_CLK),
-
-	.FDC_CT(LATCHED_IO_FDC_CT),
-	.FDC_DATA(FDC_DATA),
-	.FDC_POLL(FDC_POLL),
-	.FDC_WP(FDC_WP),
-
-	.FLOPPY_SECTOR_BYTE(SECTOR_BYTE),
-	.TRACK1_NO(TRACK1_NO),
-	.TRACK2_NO(TRACK2_NO),
-	.DRIVE1(DRIVE1),
-	.DRIVE2(DRIVE2),
-	.MOTOR(MOTOR)
+vz_floppy floppy (
+	.clk(CLK42MHZ),
+	.reset(~RESET_N),
+	.enable(LATCHED_DOSROM_EN),
+	.cpu_tick(CPU_TICK),
+	.cpu_addr(CPU_A[7:0]),
+	.cpu_iorq_n(CPU_IORQ_N),
+	.cpu_rd_n(CPU_RD_N),
+	.cpu_wr_n(CPU_WR_N),
+	.cpu_m1_n(CPU_M1_N),
+	.cpu_dout(CPU_DO),
+	.io_dout(FDC_DOUT),
+	.img_mounted(disk_img_mounted),
+	.img_readonly(img_readonly),
+	.img_size(img_size),
+	.sd_lba(disk_sd_lba),
+	.sd_rd(disk_sd_rd),
+	.sd_wr(disk_sd_wr),
+	.sd_ack(disk_sd_ack),
+	.sd_buff_addr(sd_buff_addr),
+	.sd_buff_dout(sd_buff_dout),
+	.sd_buff_din(disk_sd_buff_din),
+	.sd_buff_wr(sd_buff_wr),
+	.activity(disk_activity),
+	.loaded(),
+	.track0(),
+	.track1(),
+	.sectors_written()
 );
-
 
 // PAGE 10 from tech manual
 // alanswx
@@ -1500,8 +1725,9 @@ wire [7:0] CPU_D_INPORT    =
     (ADDRESS_JOYSTICK_1_A ? JOYSTICK_1_DATA_A : 8'hff) &
     (ADDRESS_JOYSTICK_1_B ? JOYSTICK_1_DATA_B : 8'hff) &
     (ADDRESS_JOYSTICK_2_A ? JOYSTICK_2_DATA_A : 8'hff) &
-    (ADDRESS_JOYSTICK_2_B ? JOYSTICK_2_DATA_B : 8'hff)) : 
-    	8'hzz;
+    (ADDRESS_JOYSTICK_2_B ? JOYSTICK_2_DATA_B : 8'hff)) :
+	ADDRESS_IO_FDC ? FDC_DOUT :
+    	8'hff;			// unmapped ports read FFh (MAME unmap_value_high)
 
 
 wire ADDRESS_JOYSTICK = ( CPU_A[7:4]  == 4'b0010 )?1'b1:1'b0;

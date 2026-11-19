@@ -94,18 +94,23 @@ module emu (
 	input [7:0]		ioctl_index,
 	output reg		ioctl_wait=1'b0,
 
-	output [31:0] 		sd_lba[2],
+	output [31:0] 		sd_lba[3],		// 0 tape, 1/2 disks
 	output [9:0] 		sd_rd,
 	output [9:0] 		sd_wr,
 	input [9:0] 		sd_ack,
 	input [8:0] 		sd_buff_addr,
 	input [7:0] 		sd_buff_dout,
-	output [7:0] 		sd_buff_din[2],
+	output [7:0] 		sd_buff_din[3],
 	input 			sd_buff_wr,
 	input [9:0] 		img_mounted,
 	input 			img_readonly,
 
-	input [63:0] 		img_size
+	input [63:0] 		img_size,
+
+	// sim-only: OSD status word (same bit meanings as CONF_STR in Laser310.sv)
+	input [31:0]		status,
+	// sim-only: cassette comparator level driven by the harness (--tape)
+	input			cass_in
 
 
 
@@ -126,9 +131,9 @@ wire [15:0] joys = joystick_a0;
 wire [15:0] joya = {joys[15:8], joys[7:0]};
 wire  [5:0] joyd = joystick_0[5:0] & {2'b11, {2{~|joys[7:0]}}, {2{~|joys[15:8]}}};
 
-assign AUDIO_L = {audio_l,6'b0};
-assign AUDIO_R = {audio_r,6'b0};
-wire [9:0] audio_l, audio_r;
+wire [15:0] audiomix;
+assign AUDIO_L = audiomix;
+assign AUDIO_R = audiomix;
 
 reg ce_pix;
 always @(posedge CLK_VIDEO) begin
@@ -137,9 +142,17 @@ always @(posedge CLK_VIDEO) begin
 	div <= ~div;
 	ce_pix <=  &div ;
 end
-wire [15:0] hdd_sector;
-
-assign sd_lba[1] = {16'b0,hdd_sector};
+wire [31:0] disk_sd_lba;
+wire  [1:0] disk_sd_rd, disk_sd_wr;
+wire  [7:0] disk_sd_buff_din;
+assign sd_lba[1] = disk_sd_lba;
+assign sd_lba[2] = disk_sd_lba;
+assign sd_rd[9:3] = 7'd0;
+assign sd_rd[2:1] = disk_sd_rd;
+assign sd_wr = {7'd0, disk_sd_wr, 1'b0};
+assign sd_buff_din[0] = 8'd0;
+assign sd_buff_din[1] = disk_sd_buff_din;
+assign sd_buff_din[2] = disk_sd_buff_din;
 
 wire led;
 wire hbl,vbl;
@@ -179,20 +192,20 @@ LASER310_TOP LASER310_TOP(
         .key_strobe     (key_strobe     ),
         .key_pressed    (key_pressed    ),
         .key_code       (key_code[7:0]       ),
+        .kbd_pc(status[23]),         // P3 Keyboard layout PC
 
         .dn_index(ioctl_index),
         .dn_data(ioctl_dout),
         .dn_addr(ioctl_addr[15:0]),
         .dn_wr(ioctl_wr),
         .dn_download(ioctl_download),
-        .led(LED),
-        .led2(LED2),
+        .led(),
+        .led2(),
 
-	//"O5,Turbo,Off,On;",
-        //"O6,Dos Rom,Off,On;",
-        //"O7,SHRG,Off,On;",
-        //.SWITCH({"0000",status[10],~status[7],status[6],status[5]}),
-        .SWITCH({6'b0, 1'b0, 1'b1, 1'b0, 1'b1}),
+        // Same bit meanings as Laser310.sv (v,1): 5 CPU 3x, 6 Disk drives (0 = On),
+        // 7 SHRG (0 = On). The sim reads status live (no cfg latch; settings are
+        // fixed for a run). The harness starts with bit 6 = 1 (DOS Off).
+        .SWITCH({6'b000000,1'b0,~status[7],~status[6],status[5]}),
         .UART_RXD(),
         .UART_TXD(),
         // joystick
@@ -207,7 +220,35 @@ LASER310_TOP LASER310_TOP(
         .right_2(joystick_1[0]),
         .left_2(joystick_1[1]),
         .down_2(joystick_1[2]),
-        .up_2(joystick_1[3])
+        .up_2(joystick_1[3]),
+        .cass_in(cass_in),
+        .hint_en(~status[11]),   // OB Load hints, On by default (as Laser310.sv)
+        .tape_overlay_en(~status[13]),
+        .tape_turbo_en(~status[12]),
+        .tape_audio_en(status[14]),
+        .video_pal(~status[20]),
+        .tape_deck_play(status[16]),
+        .tape_invert(status[17]),
+        .tape_pitch((status[19:18] == 2'd0 ? 2'd3 : status[19:18] - 2'd1)),   // as Laser310.sv
+        .tape_rewind(status[15]),
+        .img_mounted(img_mounted[0]),
+        .img_size(img_size),
+        .sd_lba(sd_lba[0]),
+        .sd_rd(sd_rd[0]),
+        .sd_ack(sd_ack[0]),
+        .sd_buff_addr(sd_buff_addr),
+        .sd_buff_dout(sd_buff_dout),
+        .sd_buff_wr(sd_buff_wr),
+        .tape_ready(),
+        .tape_bad(),
+        .disk_img_mounted(img_mounted[2:1]),
+        .img_readonly(img_readonly),
+        .disk_sd_lba(disk_sd_lba),
+        .disk_sd_rd(disk_sd_rd),
+        .disk_sd_wr(disk_sd_wr),
+        .disk_sd_ack(sd_ack[2:1]),
+        .disk_sd_buff_din(disk_sd_buff_din),
+        .disk_activity()
 
         );
 

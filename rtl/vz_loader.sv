@@ -88,14 +88,14 @@ always@(posedge I_CLK) begin
 				'd22: 
 					begin
 						start[7:0] <= ioctl_data; 
-                  $display("start %x %x\n",start,ioctl_data);
+                  `ifdef VZ_DEBUG $display("start %x %x\n",start,ioctl_data); `endif
 					end
 				'd23: 
 					begin
 						start[15:8] <= ioctl_data;
-                  $display("start %x %x\n",start,ioctl_data);
-                  $display("mode %x %d\n",mode,mode);
-                  $display("start %x %d\n",start,start);
+                  `ifdef VZ_DEBUG $display("start %x %x\n",start,ioctl_data); `endif
+                  `ifdef VZ_DEBUG $display("mode %x %d\n",mode,mode); `endif
+                  `ifdef VZ_DEBUG $display("start %x %d\n",start,start); `endif
 						inheader<=0;
 						inbody<=1;
 						infinish<=1;
@@ -105,8 +105,8 @@ always@(posedge I_CLK) begin
 		end
 		else if (inbody & ioctl_wr) 
 		begin
-			$display("in body curaddr %x\n",cur_addr);
-			$display("in body ioctladdr %x\n",ioctl_addr);
+			`ifdef VZ_DEBUG $display("in body curaddr %x\n",cur_addr); `endif
+			`ifdef VZ_DEBUG $display("in body ioctladdr %x\n",ioctl_addr); `endif
 			vz_addr  <= cur_addr;
 			vz_data  <= ioctl_data;
 			vz_wr    <= 1;
@@ -117,7 +117,7 @@ always@(posedge I_CLK) begin
 	    begin
 				
 	
-            $display("in finish count %x %d\n",count,count);
+            `ifdef VZ_DEBUG $display("in finish count %x %d\n",count,count); `endif
 		case (mode)
 			// 	VZ_BASIC = 0xf0;
 	      //      VZ_MCODE = 0xf1;

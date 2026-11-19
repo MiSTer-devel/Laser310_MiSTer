@@ -10,16 +10,19 @@ set_global_assignment -name VERILOG_FILE rtl/VIDEO_OUT.v
 set_global_assignment -name VERILOG_FILE rtl/SVGA_DEFINES.v
 set_global_assignment -name VERILOG_FILE rtl/SVGA_TIMING_GENERATION.v
 set_global_assignment -name VERILOG_FILE rtl/ps2_keyboard_glb.v
-set_global_assignment -name VERILOG_FILE rtl/fdc.v
+set_global_assignment -name VERILOG_FILE rtl/vz_floppy.sv
 set_global_assignment -name VERILOG_FILE rtl/6847/mc6847.v
 set_global_assignment -name VERILOG_FILE rtl/6847/rom_char.v
 set_global_assignment -name VHDL_FILE rtl/sprom.vhd
+set_global_assignment -name VHDL_FILE rtl/sprom_wr.vhd
 set_global_assignment -name VHDL_FILE rtl/spram.vhd
 set_global_assignment -name VERILOG_FILE rtl/reset_de.v
 set_global_assignment -name VHDL_FILE rtl/dpram.vhd
 set_global_assignment -name TEXT_FILE rtl/tv80/Text1.txt
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/LaserKeyboard.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/vz_loader.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/vz_overlay.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/vz_tape.sv
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/LaserCassEmu.sv
 set_global_assignment -name IP_TOOL_NAME "RAM: 1-PORT"
 set_global_assignment -name IP_TOOL_VERSION "13.0"

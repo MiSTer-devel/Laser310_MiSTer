@@ -1,0 +1,56 @@
+`verilator_config
+// Signals the headless harness (sim_headless.cpp) reads directly.
+// Kept here so no RTL needs /*verilator public*/ comments.
+
+lint_off -rule WIDTH
+lint_off -rule PINMISSING
+lint_off -rule IMPLICIT
+
+// RAM / VRAM arrays (--dump-ram, --peek, --expect-mem, --screen-text)
+public_flat_rw -module "spram" -var "mem"
+public_flat_rw -module "dpram" -var "mem"
+
+// CPU bus as seen by the machine (--cpu-log, --watch, --io-log, --stats)
+public_flat_rd -module "LASER310_TOP" -var "CPU_A"
+public_flat_rd -module "LASER310_TOP" -var "CPU_DI"
+public_flat_rd -module "LASER310_TOP" -var "CPU_DO"
+public_flat_rd -module "LASER310_TOP" -var "CPU_M1_N"
+public_flat_rd -module "LASER310_TOP" -var "CPU_MREQ_N"
+public_flat_rd -module "LASER310_TOP" -var "CPU_IORQ_N"
+public_flat_rd -module "LASER310_TOP" -var "CPU_RD_N"
+public_flat_rd -module "LASER310_TOP" -var "CPU_WR_N"
+public_flat_rd -module "LASER310_TOP" -var "CPU_INT_N"
+public_flat_rd -module "LASER310_TOP" -var "CPU_D_INPORT"
+public_flat_rd -module "LASER310_TOP" -var "GCLK"
+public_flat_rd -module "LASER310_TOP" -var "vz_wr"
+public_flat_rd -module "LASER310_TOP" -var "LATCHED_IO_DATA_WR"
+public_flat_rd -module "LASER310_TOP" -var "LATCHED_IO_SHRG"
+public_flat_rd -module "LASER310_TOP" -var "LATCHED_SHRG_EN"
+public_flat_rd -module "LASER310_TOP" -var "LATCHED_DOSROM_EN"
+public_flat_rd -module "LASER310_TOP" -var "RESET_N"
+public_flat_rd -module "LASER310_TOP" -var "hint_show"
+public_flat_rd -module "LASER310_TOP" -var "bar_show"
+public_flat_rd -module "LASER310_TOP" -var "tape_hint"
+public_flat_rd -module "LASER310_TOP" -var "TAPE_PLAY"
+public_flat_rd -module "LASER310_TOP" -var "TAPE_FAST"
+public_flat_rd -module "LASER310_TOP" -var "TAPE_LOADED"
+public_flat_rd -module "LASER310_TOP" -var "TAPE_AT_END"
+public_flat_rd -module "LASER310_TOP" -var "TAPE_POS"
+public_flat_rd -module "LASER310_TOP" -var "TAPE_LEN"
+public_flat_rd -module "LASER310_TOP" -var "TAPE_UNDERFLOWS"
+public_flat_rd -module "LASER310_TOP" -var "tape_ready"
+public_flat_rd -module "LASER310_TOP" -var "tape_bad"
+public_flat_rd -module "vz_tape" -var "cal_hz"
+public_flat_rd -module "vz_tape" -var "hz"
+public_flat_rd -module "tv80_core" -var "PC"
+public_flat_rd -module "tv80_core" -var "SP"
+public_flat_rw -module "sprom" -var "d"
+public_flat_rw -module "RESET_DE" -var "RESET_COUNT"
+
+// floppy (rtl/vz_floppy.sv)
+public_flat_rd -module "vz_floppy" -var "ready"
+public_flat_rd -module "vz_floppy" -var "ptrk"
+public_flat_rd -module "vz_floppy" -var "latch"
+public_flat_rd -module "vz_floppy" -var "s"
+public_flat_rd -module "vz_floppy" -var "sectors_written"
+public_flat_rd -module "vz_floppy" -var "dirty"

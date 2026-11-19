@@ -27,7 +27,7 @@ module tv80s (/*AUTOARG*/
   // Outputs
   m1_n, mreq_n, iorq_n, rd_n, wr_n, rfsh_n, halt_n, busak_n, A, dout, 
   // Inputs
-  reset_n, clk, wait_n, int_n, nmi_n, busrq_n, di, dir, dirset
+  reset_n, clk, wait_n, int_n, nmi_n, busrq_n, di, dir, dirsp, dirset
   );
 
   parameter Mode = 0;    // 0 => Z80, 1 => Fast Z80, 2 => 8080, 3 => GB
@@ -53,7 +53,8 @@ module tv80s (/*AUTOARG*/
   input [7:0]   di;
   output [7:0]  dout;
 
-  input [15:0]  dir;
+  input [15:0]  dir;     // PC to jump to on dirset
+  input [15:0]  dirsp;   // SP to load on dirset
   input         dirset;
 
   reg           mreq_n; 
@@ -98,6 +99,7 @@ module tv80s (/*AUTOARG*/
      .ts (tstate),
      .intcycle_n (intcycle_n),
      .dir (dir),
+     .dirsp (dirsp),
      .dirset (dirset)
 
      );  
@@ -118,7 +120,11 @@ module tv80s (/*AUTOARG*/
           wr_n <= #1 1'b1;
           iorq_n <= #1 1'b1;
           mreq_n <= #1 1'b1;
-          if (mcycle[0])
+          // dirset (VZ snapshot autostart) restarts the core at M1/T1: drop any
+          // bus cycle the CPU was frozen in, or a pending write lands at the new PC.
+          if (dirset)
+            ;
+          else if (mcycle[0])
             begin
               if (tstate[1] || (tstate[2] && wait_n == 1'b0))
                 begin
