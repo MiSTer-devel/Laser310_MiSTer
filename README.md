@@ -47,7 +47,45 @@ Mount a `.wav` or `.cas` in the OSD **Tape** slot, then type `CLOAD` (BASIC) or 
 
 # Floppy disks
 
-**Disk drives (DOS)** On (the default) fits the DD20 / DI-40 disk interface: VZ DOS 1.2 at 4000h and two drives. VZ DOS takes the top 311 bytes of RAM (BASIC's top of memory is FEC8h instead of FFFFh); set it Off and Apply and reset for a machine without the disk interface. Mount `.dsk` images in **Disk 1** and **Disk 2**. At the `DOS BASIC V1.2` prompt use the DOS commands: `DIR`, `RUN"NAME"` (BASIC, `T:` files), `BRUN"NAME"` (machine code, `B:` files), `LOAD`, `SAVE"NAME"`, `ERA`, `REN`, `INIT` (format), `DRIVE 1`/`DRIVE 2`, `STATUS`.
+**Disk drives (DOS)** On (the default) fits the DD20 / DI-40 disk interface: VZ DOS 1.2 at 4000h and two drives. VZ DOS takes the top 311 bytes of RAM (BASIC's top of memory is FEC8h instead of FFFFh); set it Off and Apply and reset for a machine without the disk interface. Mount `.dsk` images in **Disk 1** and **Disk 2**.
+
+## Using VZ DOS
+
+The machine starts with `DOS BASIC V1.2` above `READY`. Nothing loads by itself: mount a disk, type `DIR` to see what is on it, then start a program by name.
+
+1. OSD **Disk 1**: pick a `.dsk` from `games/Laser/`.
+2. `DIR` ↵ lists the files: `T:` BASIC program, `B:` machine code, `D:` data file. SPACE pauses the listing, SPACE again continues.
+3. `T:` files: `RUN"NAME"` ↵. `B:` files: `BRUN"NAME"` ↵.
+
+Typing `"`: with Keyboard layout **VZ** (the default) it is Shift+2; with **PC** it is Shift+' as on a PC keyboard.
+
+| Command | What it does |
+|---|---|
+| `DIR` | List the files on the current drive. |
+| `RUN"NAME"` | Load a BASIC (`T:`) program and run it. Plain `RUN` still runs the program in memory. |
+| `LOAD"NAME"` | Load a BASIC program (then `RUN`, `LIST`...). |
+| `SAVE"NAME"` | Save the BASIC program in memory as a `T:` file. It never overwrites: an existing name gives `?FILE ALREADY EXISTS`, so `ERA` the old one first. |
+| `BRUN"NAME"` | Load a machine-code (`B:`) file and jump to it. |
+| `BLOAD"NAME"` | Load a `B:` file to the address it was saved from, without running it. |
+| `BSAVE"NAME",SSSS,EEEE` | Save memory from SSSS to EEEE (inclusive) as a `B:` file. Addresses are exactly 4 hex digits, no `&` or `$`: `BSAVE"CODE",9000,9FFF`. |
+| `ERA"NAME"` | Delete a file. |
+| `REN"OLD","NEW"` | Rename a file (the type stays). |
+| `DRIVE 1` / `DRIVE 2` | Choose the drive the other commands use (drive 1 at power-on). |
+| `STATUS` | Free space on the disk, e.g. `624 RECORDS FREE` `78.0K BYTES FREE` (an empty disk). |
+| `INIT` | Format the disk in the current drive. **Erases everything, without asking**: check `DRIVE` first. Takes 2-3 minutes. |
+| `DCOPY"NAME"` | Copy one `T:` or `B:` file. Asks `SOURCE DISK(1/2)?` and `DESTINATION DISK(1/2)?`; with the same drive for both it asks you to swap disks (OSD remount, then SPACE). Direct mode only. |
+| `DCOPY` | Copy a whole disk, track by track, onto an already `INIT`ed disk (fully overwritten). |
+| `OPEN"NAME",0` / `OPEN"NAME",1` | In a program: open a `D:` data file for reading (0) or writing (1, appends; creates it if missing). At most two files open. |
+| `PR#"NAME",A,B$...` | In a program: write one record (a line) to a file opened with 1. |
+| `IN#"NAME",A,B$...` | In a program: read one record from a file opened with 0. There is no end-of-file test, so write a count or an end marker yourself. |
+| `CLOSE"NAME"` | Close a data file. Always `CLOSE` in the program: a `CLOSE` typed after BREAK frees the file but loses unwritten data. |
+
+- File names go in double quotes, up to 8 characters (longer names are cut to 8).
+- `DCOPY` clears the BASIC program in memory and selects drive 1 again: save your work first.
+- DOS errors: `?FILE NOT FOUND`, `?FILE ALREADY EXISTS`, `?FILE TYPE MISMATCH` (e.g. `RUN` on a `B:` file), `?DISK WRITE PROTECTED` (disk mounted read-only), `?DISK FULL`, `?DIRECTORY FULL` (120 files), `?DISK I/O ERROR` (bad sector or checksum), `?FILE NOT OPEN`, `?FILE ALREADY OPEN`, `?DISK BUFFER FULL` (third open file), `?ILLEGAL READ` / `?ILLEGAL WRITE` (wrong `OPEN` mode).
+- A disk holds 40 tracks of 16 sectors of 128 bytes; track 0 is the directory and free-sector map.
+
+## Disk emulation
 
 - **Images:** every `.dsk` variant in circulation works (98,560, 99,184, 99,185 bytes and the odd sizes in between): the image is read at mount like MAME does, by finding each sector's header and data marks, so extra or missing gap bytes don't matter.
 - **Writing:** `SAVE`, `ERA`, `INIT` etc. write to the image file on the SD card. Each written sector (128 bytes and its checksum) goes back in place, so the file keeps its own layout and size and stays readable by other emulators. A disk mounted read-only is write protected (`?DISK WRITE PROTECTED`).
